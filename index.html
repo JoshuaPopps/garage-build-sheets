@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en" data-theme="1990">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#070709">
+<meta name="description" content="Garage Build Sheets — your bike, your mods, your photos, your notes. Offline, no account, free.">
+<title>Garage Build Sheets</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Narrow:wght@400;500;600;700&family=UnifrakturCook:wght@700&family=UnifrakturMaguntia&family=Barlow+Condensed:wght@500;600;700&family=Courier+Prime:wght@400;700&family=Special+Elite&family=Anton&family=Yellowtail&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="top">
+  <p class="eyebrow">Popps&rsquo;s Garage &middot; Shop Sheet N&ordm; 7</p>
+  <h1 class="chrome-text">Garage Build Sheets</h1>
+  <p class="tagline">Your bike. Your mods. Your photos. Your notes. <strong>Offline, no account, free.</strong></p>
+</header>
+
+<main>
+  <div id="welcome" class="card welcome" hidden>
+    <h2>Welcome to the garage</h2>
+    <p>Three <strong>example bikes</strong> are loaded so you can see how a build sheet works &mdash; tap around, move a part from <em>Planned</em> to <em>Installed</em>, hide the money, try a different sheet style. Nothing here is yours yet, and the examples are labelled <span class="badge example">Example</span> everywhere.</p>
+    <p>When you&rsquo;re ready, add your own bike &mdash; it takes about 30 seconds &mdash; or clear the examples and start with an empty garage.</p>
+    <button id="welcomeKeep" type="button">Keep the examples &amp; explore</button>
+    <button id="welcomeEmpty" type="button" class="secondary">Start with an empty garage</button>
+  </div>
+
+  <section id="view-garage" class="view active" aria-label="Your garage">
+    <h2>Your garage</h2>
+    <div id="garageGrid" class="garage-grid"></div>
+    <div id="garageEmpty" class="empty" hidden>
+      <strong>No bikes in the garage yet.</strong>
+      <p>Here&rsquo;s the whole idea, in three steps:</p>
+      <ol>
+        <li><strong>Add a bike</strong> &mdash; year, make, model, and what you&rsquo;re building it into.</li>
+        <li><strong>Add the parts</strong> you fit, buy, or are dreaming about &mdash; each one gets a stage: Idea, Planned, Purchased, Installed.</li>
+        <li><strong>Add photos and notes</strong> as you go. The app turns it into a stylised build sheet you can print or share.</li>
+      </ol>
+      <p>Everything stays on this device. No account, no cloud, no one sees it unless you choose to share it.</p>
+    </div>
+    <button id="addBikeBtn" type="button" class="big">+ Add a bike</button>
+    <div id="bikeFormWrap"></div>
+  </section>
+
+  <section id="view-detail" class="view" aria-label="Build sheet">
+    <div id="detailWrap"></div>
+  </section>
+
+  <section id="view-data" class="view" aria-label="Your data">
+    <h2>Your data</h2>
+    <div class="card">
+      <h3>Save &amp; share your garage</h3>
+      <p>Your garage lives on this device, in the browser&rsquo;s own storage. Export it any time as one file &mdash; photos included &mdash; and import it on another phone or after clearing the browser.</p>
+      <button id="exportBtn" type="button">Export garage (.json)</button>
+      <button id="importBtn" type="button" class="secondary">Import garage (.json)</button>
+      <input id="importFile" type="file" accept=".json,application/json" hidden>
+      <p class="muted">Importing <strong>replaces</strong> the garage on this device. Export first if you want a safety copy.</p>
+    </div>
+    <div class="card">
+      <h3>Example bikes</h3>
+      <p>The three example bikes (Fat Boy, Knucklehead, Softail) are labelled <span class="badge example">Example</span>. They&rsquo;re yours to delete whenever you&rsquo;re done with them.</p>
+      <button id="restoreExamplesBtn" type="button" class="secondary">Restore the example bikes</button>
+      <button id="deleteExamplesBtn" type="button" class="danger">Delete all example bikes</button>
+    </div>
+    <div class="card">
+      <h3>Start over</h3>
+      <p>Deletes every bike, part, photo, note, and issue on this device. This cannot be undone &mdash; export first if you might want it back.</p>
+      <button id="resetBtn" type="button" class="danger">Delete everything &amp; start over</button>
+    </div>
+    <div class="card">
+      <h3>About</h3>
+      <p id="aboutText">Garage Build Sheets — Version 1.0.0. Plain JavaScript, no dependencies, works offline. Photos stay on this device; nothing is uploaded anywhere. Sharing is opt-in only: nothing posts itself.</p>
+      <p class="muted">Prices in the example bikes are example prices only. Specs on the sheets are what you type in &mdash; the app never invents a torque, clearance, or factory number.</p>
+    </div>
+  </section>
+</main>
+
+<nav class="nav" aria-label="Sections">
+  <button type="button" data-nav="garage" class="active">Garage</button>
+  <button type="button" data-nav="detail">Build sheet</button>
+  <button type="button" data-nav="data">Data</button>
+</nav>
+
+<div id="toast" class="toast" hidden><span id="toastMsg"></span><button id="toastUndo" type="button" class="small">Undo</button><button id="toastClose" type="button" class="small secondary">Dismiss</button></div>
+
+<script src="store.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
