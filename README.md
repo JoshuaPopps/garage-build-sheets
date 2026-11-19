@@ -1,6 +1,6 @@
 # Garage Build Sheets
 
-**Version 1.0.0** — a living build sheet for every bike in your garage. Add
+**Version 1.0.1** — a living build sheet for every bike in your garage. Add
 your bikes, list the modifications, upload your own photos (not stock
 photos), and get a stylized build sheet you can update over time and keep
 notes on. Built for the garage: phone-first, offline, no account, no server,
@@ -97,7 +97,11 @@ renderer each.
 
 The app opens with three clearly-labelled **EXAMPLE** bikes — a 1995 Fat
 Boy Bobber, a 1947 Knucklehead, and a 1990 Softail — so you can see what a
-finished sheet looks like. The welcome card offers **Keep the examples &
+finished sheet looks like. Each example bike carries its own hand-drawn
+blueprint line drawing as its hero photo (Fat Boy: solid disc wheels,
+bobbed fender, short pipes; Knucklehead: springer front end, rigid
+frame, fishtail exhaust; Softail: spoked whitewalls, sissy bar, Evo
+1340) — no shared placeholder, no stamp over the image. The welcome card offers **Keep the examples &
 explore** or **Start with an empty garage**. Example bikes can be restored
 or deleted any time from the Data tab. An empty garage shows a teaching
 empty state instead of a blank screen.
@@ -138,6 +142,6 @@ empty state instead of a blank screen.
 - `app.js` — browser shell: IndexedDB, photo downscale, rendering,
   forms, share-card drawing, downloads.
 - `styles.css` — 1990 Treatment base plus all six sheet styles.
-- `sw.js` — cache-first service worker (`garage-build-sheets-v1`).
+- `sw.js` — cache-first service worker (`garage-build-sheets-v2`).
 - `manifest.webmanifest`, `icons/` — PWA install files.
 - `test.js`, `test_ui.py` — see TESTING.md.

@@ -2,13 +2,18 @@
 
 ## Node tests — `node test.js`
 
-Plain `check(name, cond)` style, like the sibling apps. **173/173 pass.**
+Plain `check(name, cond)` style, like the sibling apps. **178/178 pass.**
 
 Covered:
 
 - **Seed data** — validates; 3 bikes, 15 mods, 9 photos, 5 notes, 7 issues;
   all bikes flagged EXAMPLE; 3 different styles in use; photos are inline
-  SVG placeholders.
+  SVG drawings — one distinct blueprint per example bike (Fat Boy disc
+  wheels / bobbed fender, Knucklehead springer / fishtail, Softail
+  whitewalls / sissy bar), no "EXAMPLE PHOTO" stamp anywhere, each
+  drawing named for its bike, all three photos of a bike sharing that
+  bike's drawing, and `bikeDrawing` falling back to a labelless generic
+  outline for unknown ids.
 - **Lifecycle math** — Fat Boy 62% / $308 invested / $623 total / 13.5 hrs;
   Knucklehead 19% / $0 / $25 / 1 hr; Softail 75% / $22 / $22 / 3 hrs;
   invested counts Purchased + Installed only; no mods → 5%.
@@ -88,13 +93,14 @@ verified to decode:
 ## Playwright UI tests — `/tmp/pw-venv/bin/python test_ui.py`
 
 Serves the staging dir on 127.0.0.1 and drives the real app in Chromium
-at phone width (390×844). **78/78 pass, zero page errors, zero bad
+at phone width (390×844). **80/80 pass, zero page errors, zero bad
 requests** (the two Google Fonts requests fail in the VM sandbox — the
 proxy cannot reach fonts.googleapis.com / fonts.gstatic.com — and are
 tolerated the same way the timing helper's tests tolerate them; the app
 falls back to system fonts).
 
-Covered: first-run welcome + 3 example bikes; Keep examples hides the
+Covered: first-run welcome + 3 example bikes — the garage cards show 3
+distinct hero drawings with no EXAMPLE PHOTO stamp; Keep examples hides the
 welcome; detail renders with hero, progress ring (62%), 5 tabs, sheet in
 the 1990 Treatment with footer and inline-SVG QR; style picker switches
 to Magazine Feature and back; **pin dragging** — a mouse drag moves a pin

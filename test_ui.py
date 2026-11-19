@@ -86,6 +86,11 @@ def main():
         check("Fat Boy card names the bike", "1995 Fat Boy Bobber" in card_text)
         check("Fat Boy card shows invested", "$308" in card_text)
         check("example badge present", page.locator(".badge.example").count() >= 3)
+        hero_srcs = page.locator(".bike-card img").evaluate_all("els => els.map(e => e.getAttribute('src'))")
+        check("garage cards show 3 distinct hero drawings",
+              len(hero_srcs) == 3 and len(set(hero_srcs)) == 3)
+        check("no garage hero carries the EXAMPLE PHOTO stamp",
+              all("EXAMPLE" not in (s or "") for s in hero_srcs))
 
         page.click("#welcomeKeep")
         page.wait_for_selector("#welcome[hidden]", state="attached", timeout=5000)
@@ -332,11 +337,11 @@ def main():
         page.locator(".bike-card", has_text="1995 Fat Boy Bobber").click()
         page.wait_for_selector("#detailWrap .hero-wrap", timeout=10000)
         page.locator('[data-action="tab"][data-id="photos"]').click()
-        fig = page.locator(".timeline-cols figure", has_text="Example photo — Fat Boy on the bench")
+        fig = page.locator(".timeline-cols figure", has_text="Example drawing — Fat Boy on the bench")
         fig.locator('[data-action="edit-photo"]').click()
         page.wait_for_selector("#photoForm", timeout=5000)
         check("photo form opens pre-filled for editing",
-              page.locator("#photoForm input[name='caption']").input_value() == "Example photo — Fat Boy on the bench")
+              page.locator("#photoForm input[name='caption']").input_value() == "Example drawing — Fat Boy on the bench")
         page.fill("#photoForm input[name='caption']", "Bench shot, edited")
         page.locator("#photoForm select[name='phase']").select_option("after")
         page.click("#photoForm button[type='submit']")

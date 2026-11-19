@@ -23,8 +23,8 @@
 /* Constants                                                           */
 /* ------------------------------------------------------------------ */
 
-var APP_VERSION = '1.0.0';
-var CACHE_NAME = 'garage-build-sheets-v1';
+var APP_VERSION = '1.0.1';
+var CACHE_NAME = 'garage-build-sheets-v2';
 
 var STYLES = [
   { id: 'treatment1990', name: '1990 Treatment',
@@ -1513,15 +1513,156 @@ function validateImport(raw) {
 /* Example prices only. No real personal data.                         */
 /* ------------------------------------------------------------------ */
 
-function svgPlaceholder(label) {
-  var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500" viewBox="0 0 800 500">' +
-    '<rect width="800" height="500" fill="#1a1a1f"/>' +
-    '<g fill="none" stroke="#e8e8ec" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">' +
-    '<circle cx="180" cy="380" r="70"/><circle cx="620" cy="380" r="70"/>' +
-    '<path d="M180 380 L320 240 L470 240 L620 380 M320 240 L390 380 M470 240 L560 380 M180 380 L470 380"/></g>' +
-    '<text x="400" y="110" fill="#9d6bff" font-family="sans-serif" font-size="36" text-anchor="middle">' +
-    label + '</text></svg>';
-  return 'data:image/svg+xml,' + encodeURIComponent(svg);
+/* Per-bike blueprint drawings — one distinct line drawing per example
+ * bike, in the shop-manual idiom (white/chrome lines on dark, purple
+ * title). Same 800x500 canvas as the old shared placeholder, so layout
+ * is unchanged; linework bold enough to read at phone-card width, and
+ * callout text only where it stays legible at that size. */
+function svgDataUrl(inner) {
+  var grid = '', i;
+  for (i = 40; i < 800; i += 40) grid += '<line x1="' + i + '" y1="0" x2="' + i + '" y2="500" stroke="#ffffff" stroke-opacity="0.04" stroke-width="1"/>';
+  for (i = 40; i < 500; i += 40) grid += '<line x1="0" y1="' + i + '" x2="800" y2="' + i + '" stroke="#ffffff" stroke-opacity="0.04" stroke-width="1"/>';
+  return 'data:image/svg+xml,' + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500" viewBox="0 0 800 500">' +
+    '<rect width="800" height="500" fill="#1a1a1f"/>' + grid + inner + '</svg>');
+}
+function svgTitle(text) {
+  return '<text x="400" y="54" fill="#9d6bff" font-family="sans-serif" font-size="34" font-weight="bold" text-anchor="middle">' + text + '</text>' +
+    '<line x1="200" y1="68" x2="600" y2="68" stroke="#9d6bff" stroke-width="3"/>';
+}
+function svgGround() {
+  return '<line x1="40" y1="458" x2="760" y2="458" stroke="#e8e8ec" stroke-width="3" stroke-opacity="0.5"/>';
+}
+function svgCallout(x, y, anchor, text, lx1, ly1, lx2, ly2) {
+  var s = '';
+  if (lx1 !== undefined) s += '<line x1="' + lx1 + '" y1="' + ly1 + '" x2="' + lx2 + '" y2="' + ly2 + '" stroke="#e8e8ec" stroke-width="2"/>';
+  return s + '<text x="' + x + '" y="' + y + '" fill="#e8e8ec" font-family="sans-serif" font-size="24" text-anchor="' + anchor + '">' + text + '</text>';
+}
+function svgSpokes(cx, cy, r) {
+  var out = '', a, x, y, i;
+  var angles = [0, 60, 120, 180, 240, 300];
+  for (i = 0; i < angles.length; i++) {
+    a = angles[i] * Math.PI / 180;
+    x = Math.round(cx + r * Math.cos(a)); y = Math.round(cy + r * Math.sin(a));
+    out += '<line x1="' + cx + '" y1="' + cy + '" x2="' + x + '" y2="' + y + '" stroke="#e8e8ec" stroke-width="3"/>';
+  }
+  return out;
+}
+function svgSpokedWheel(cx, cy, whitewall) {
+  var s = '<circle cx="' + cx + '" cy="' + cy + '" r="78" fill="#1a1a1f" stroke="#e8e8ec" stroke-width="12"/>';
+  if (whitewall) s += '<circle cx="' + cx + '" cy="' + cy + '" r="64" fill="none" stroke="#e8e8ec" stroke-width="7"/>';
+  s += '<circle cx="' + cx + '" cy="' + cy + '" r="56" fill="none" stroke="#e8e8ec" stroke-width="4"/>' +
+    svgSpokes(cx, cy, 54) + '<circle cx="' + cx + '" cy="' + cy + '" r="10" fill="#e8e8ec"/>';
+  return s;
+}
+function svgDiscWheel(cx, cy) {
+  var s = '<circle cx="' + cx + '" cy="' + cy + '" r="80" fill="#1a1a1f" stroke="#e8e8ec" stroke-width="16"/>' +
+    '<circle cx="' + cx + '" cy="' + cy + '" r="56" fill="#2a2a31" stroke="#e8e8ec" stroke-width="6"/>';
+  var angles = [0, 72, 144, 216, 288], a, x, y, i;
+  for (i = 0; i < angles.length; i++) {
+    a = angles[i] * Math.PI / 180;
+    x = Math.round(cx + 32 * Math.cos(a)); y = Math.round(cy + 32 * Math.sin(a));
+    s += '<circle cx="' + x + '" cy="' + y + '" r="4" fill="#e8e8ec"/>';
+  }
+  return s + '<circle cx="' + cx + '" cy="' + cy + '" r="12" fill="#e8e8ec"/>';
+}
+/* 1995 Fat Boy Bobber — solid disc wheels, fat front tire, bobbed rear
+ * fender, solo seat, low narrow bars, short pipes, raw tank. */
+function svgFatBoy() {
+  var g = '<g fill="none" stroke="#e8e8ec" stroke-linecap="round" stroke-linejoin="round">';
+  var inner = svgTitle('1995 FAT BOY — BOBBER') + svgGround() +
+    svgDiscWheel(180, 380) + svgDiscWheel(620, 380) + g +
+    '<path d="M350 190 L178 378 M366 198 L194 380" stroke-width="9"/>' +
+    '<path d="M352 192 L336 148 L398 146" stroke-width="8"/>' +
+    '<path d="M352 192 L520 208 M352 192 L462 384 M520 208 L498 292 M520 208 L620 380 M462 384 L620 380" stroke-width="8"/>' +
+    '<path d="M498 228 Q470 196 420 198 Q384 200 380 228 Q384 252 420 254 Q468 254 498 228 Z" stroke-width="8" fill="#232329"/>' +
+    '<path d="M400 220 Q430 210 465 218" stroke-width="3" stroke-opacity="0.6"/>' +
+    '<circle cx="440" cy="206" r="6" stroke-width="5"/>' +
+    '<path d="M448 300 L470 268 L492 276 L472 308 Z" stroke-width="6" fill="#232329"/>' +
+    '<path d="M480 298 L500 260 L524 268 L506 306 Z" stroke-width="6" fill="#232329"/>' +
+    '<path d="M456 290 L484 296 M460 280 L488 286 M464 272 L490 278" stroke-width="3"/>' +
+    '<circle cx="478" cy="348" r="30" stroke-width="8" fill="#232329"/>' +
+    '<circle cx="540" cy="352" r="20" stroke-width="6" fill="#232329"/>' +
+    '<path d="M512 262 Q545 246 575 258 Q585 268 570 272 Q535 278 514 272 Z" stroke-width="6" fill="#232329"/>' +
+    '<path d="M528 276 l10 12 l-20 12 l10 12 M556 276 l10 12 l-20 12 l10 12" stroke-width="4"/>' +
+    '<path d="M566 318 Q620 286 674 320" stroke-width="8"/>' +
+    '<path d="M486 378 L566 398 M494 392 L574 408" stroke-width="7"/>' +
+    '<circle cx="322" cy="232" r="16" stroke-width="6"/>' +
+    '</g>' +
+    svgCallout(55, 110, 'start', 'SOLID DISC WHEELS', 270, 118, 200, 300) +
+    svgCallout(740, 100, 'end', 'BOBBED FENDER', 720, 108, 690, 300);
+  return svgDataUrl(inner);
+}
+/* 1947 Knucklehead — springer front end, rigid frame, fishtail exhaust,
+ * solo sprung seat, spoked wheels, rocker-box bumps on the motor. */
+function svgKnucklehead() {
+  var g = '<g fill="none" stroke="#e8e8ec" stroke-linecap="round" stroke-linejoin="round">';
+  var inner = svgTitle('1947 KNUCKLEHEAD — FL CHOPPER') + svgGround() +
+    svgSpokedWheel(180, 380, false) + svgSpokedWheel(620, 380, false) + g +
+    '<path d="M358 186 L180 380 M372 194 L194 380" stroke-width="8"/>' +
+    '<path d="M330 240 l16 10 l-32 10 l32 10 l-32 10 l32 10 l-32 10 l16 10" stroke-width="4"/>' +
+    '<circle cx="312" cy="252" r="17" stroke-width="6"/>' +
+    '<path d="M358 186 L340 128 L408 118" stroke-width="8"/>' +
+    '<path d="M358 186 L540 204 M358 186 L458 384 M540 204 L620 380 M458 384 L620 380" stroke-width="8"/>' +
+    '<path d="M498 228 Q470 196 420 198 Q384 200 380 228 Q384 252 420 254 Q468 254 498 228 Z" stroke-width="8" fill="#232329"/>' +
+    '<path d="M400 220 Q430 210 465 218" stroke-width="3" stroke-opacity="0.6"/>' +
+    '<circle cx="442" cy="202" r="6" stroke-width="5"/>' +
+    '<path d="M446 302 L468 266 L492 274 L472 310 Z" stroke-width="6" fill="#232329"/>' +
+    '<path d="M480 298 L500 260 L524 268 L506 306 Z" stroke-width="6" fill="#232329"/>' +
+    '<ellipse cx="478" cy="262" rx="15" ry="9" stroke-width="6" fill="#232329"/>' +
+    '<ellipse cx="510" cy="256" rx="15" ry="9" stroke-width="6" fill="#232329"/>' +
+    '<path d="M454 292 L482 298 M458 282 L486 288" stroke-width="3"/>' +
+    '<circle cx="476" cy="346" r="30" stroke-width="8" fill="#232329"/>' +
+    '<path d="M512 258 Q546 242 576 254 Q586 264 570 270 Q536 276 514 268 Z" stroke-width="6" fill="#232329"/>' +
+    '<path d="M530 272 l10 12 l-20 12 l10 12" stroke-width="4"/>' +
+    '<path d="M492 372 Q580 392 668 352" stroke-width="7"/>' +
+    '<path d="M668 344 L706 336 L710 360 L668 360 Z" stroke-width="6" fill="#232329"/>' +
+    '<path d="M570 316 Q620 288 672 318" stroke-width="7"/>' +
+    '</g>' +
+    svgCallout(55, 110, 'start', 'SPRINGER FRONT END', 170, 112, 300, 235) +
+    svgCallout(740, 110, 'end', 'RIGID FRAME', 710, 118, 590, 285) +
+    svgCallout(740, 235, 'end', 'FISHTAIL EXHAUST', 715, 243, 702, 340);
+  return svgDataUrl(inner);
+}
+/* 1990 Softail — spoked whitewalls, telescopic fork, full fenders,
+ * two-up seat, tall sissy bar, full-length pipes, Evo 1340. */
+function svgSoftail() {
+  var g = '<g fill="none" stroke="#e8e8ec" stroke-linecap="round" stroke-linejoin="round">';
+  var inner = svgTitle('1990 SOFTAIL — HERITAGE CLASSIC') + svgGround() +
+    svgSpokedWheel(180, 380, true) + svgSpokedWheel(620, 380, true) + g +
+    '<path d="M342 188 L180 380 M356 196 L194 380" stroke-width="9"/>' +
+    '<path d="M130 320 Q180 288 235 322" stroke-width="7"/>' +
+    '<path d="M342 188 L326 142 L388 136" stroke-width="8"/>' +
+    '<path d="M342 188 L520 206 M342 188 L460 384 M520 206 L500 290 M520 206 L620 380 M460 384 L620 380" stroke-width="8"/>' +
+    '<path d="M498 228 Q470 196 420 198 Q384 200 380 228 Q384 252 420 254 Q468 254 498 228 Z" stroke-width="8" fill="#232329"/>' +
+    '<path d="M400 220 Q430 210 465 218" stroke-width="3" stroke-opacity="0.6"/>' +
+    '<rect x="424" y="222" width="26" height="11" stroke-width="3"/>' +
+    '<path d="M446 302 L468 266 L492 274 L472 310 Z" stroke-width="6" fill="#232329"/>' +
+    '<path d="M480 298 L500 260 L524 268 L506 306 Z" stroke-width="6" fill="#232329"/>' +
+    '<path d="M456 290 L484 296 M460 280 L488 286 M464 272 L490 278" stroke-width="3"/>' +
+    '<circle cx="476" cy="346" r="30" stroke-width="8" fill="#232329"/>' +
+    '<path d="M505 258 Q540 240 585 248 Q610 252 600 264 Q560 272 510 268 Z" stroke-width="6" fill="#232329"/>' +
+    '<path d="M612 252 L628 148 M612 156 L644 150" stroke-width="6"/>' +
+    '<path d="M556 314 Q620 282 686 320" stroke-width="7"/>' +
+    '<path d="M486 378 L690 392 M494 392 L696 404" stroke-width="7"/>' +
+    '</g>' +
+    svgCallout(740, 100, 'end', 'SISSY BAR', 720, 108, 640, 160) +
+    svgCallout(55, 110, 'start', 'SPOKED WHEELS', 250, 118, 200, 300);
+  return svgDataUrl(inner);
+}
+/* Generic outline with no label — fallback for any non-seed bike id. */
+function svgGenericBike() {
+  var g = '<g fill="none" stroke="#e8e8ec" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">';
+  var inner = svgGround() +
+    '<circle cx="180" cy="380" r="70"/><circle cx="620" cy="380" r="70"/>' + g +
+    '<path d="M180 380 L320 240 L470 240 L620 380 M320 240 L390 380 M470 240 L560 380 M180 380 L470 380"/></g>';
+  return svgDataUrl(inner);
+}
+function bikeDrawing(bikeId) {
+  if (bikeId === 'bike-knuckle-example') return svgKnucklehead();
+  if (bikeId === 'bike-softail-example') return svgSoftail();
+  if (bikeId === 'bike-fatboy-example') return svgFatBoy();
+  return svgGenericBike();
 }
 function mkMod(bikeId, o) {
   var m = {
@@ -1547,7 +1688,7 @@ function mkIssue(bikeId, o) {
 function mkPhoto(bikeId, id, phase, caption) {
   return {
     id: id, bikeId: bikeId, phase: phase, caption: caption,
-    isExample: true, hasBlob: false, dataUrl: svgPlaceholder('EXAMPLE PHOTO')
+    isExample: true, hasBlob: false, dataUrl: bikeDrawing(bikeId)
   };
 }
 function sampleStore() {
@@ -1590,9 +1731,9 @@ function sampleStore() {
     mkIssue(fat.id, { title: 'Fender squeak', severity: 'low', date: '2026-10-28', detail: 'Rear fender squeaks over bumps.', status: 'resolved', fixText: 'Rubber-mounted the fender stays.', resolvedDate: '2026-11-02' })
   );
   store.photos.push(
-    mkPhoto(fat.id, 'photo-fatboy-before', 'before', 'Example photo — stock Fat Boy before the build'),
-    mkPhoto(fat.id, 'photo-fatboy-during', 'during', 'Example photo — Fat Boy on the bench'),
-    mkPhoto(fat.id, 'photo-fatboy-after', 'after', 'Example photo — Fat Boy as it sits now')
+    mkPhoto(fat.id, 'photo-fatboy-before', 'before', 'Example drawing — stock Fat Boy before the build'),
+    mkPhoto(fat.id, 'photo-fatboy-during', 'during', 'Example drawing — Fat Boy on the bench'),
+    mkPhoto(fat.id, 'photo-fatboy-after', 'after', 'Example drawing — Fat Boy as it sits now')
   );
   /* --- 1947 Knucklehead (Shop Manual) --- */
   var knuck = {
@@ -1625,9 +1766,9 @@ function sampleStore() {
     mkIssue(knuck.id, { title: 'Linkert jetting unverified', severity: 'medium', date: '2026-11-03', detail: 'No jetting published for the M74B — do not guess.' })
   );
   store.photos.push(
-    mkPhoto(knuck.id, 'photo-knuckle-before', 'before', 'Example photo — Knucklehead as found'),
-    mkPhoto(knuck.id, 'photo-knuckle-during', 'during', 'Example photo — Knucklehead on the bench'),
-    mkPhoto(knuck.id, 'photo-knuckle-after', 'after', 'Example photo — Knucklehead as it sits now')
+    mkPhoto(knuck.id, 'photo-knuckle-before', 'before', 'Example drawing — Knucklehead as found'),
+    mkPhoto(knuck.id, 'photo-knuckle-during', 'during', 'Example drawing — Knucklehead on the bench'),
+    mkPhoto(knuck.id, 'photo-knuckle-after', 'after', 'Example drawing — Knucklehead as it sits now')
   );
   /* --- 1990 Softail (Magazine Feature) --- */
   var soft = {
@@ -1659,9 +1800,9 @@ function sampleStore() {
     mkIssue(soft.id, { title: 'Temp plate', severity: 'low', date: '2026-10-24', detail: 'Paper temp carried until the metal plate arrives.' })
   );
   store.photos.push(
-    mkPhoto(soft.id, 'photo-softail-before', 'before', 'Example photo — Softail as found'),
-    mkPhoto(soft.id, 'photo-softail-during', 'during', 'Example photo — Softail on the bench'),
-    mkPhoto(soft.id, 'photo-softail-after', 'after', 'Example photo — Softail as it sits now')
+    mkPhoto(soft.id, 'photo-softail-before', 'before', 'Example drawing — Softail as found'),
+    mkPhoto(soft.id, 'photo-softail-during', 'during', 'Example drawing — Softail on the bench'),
+    mkPhoto(soft.id, 'photo-softail-after', 'after', 'Example drawing — Softail as it sits now')
   );
   store.selectedBikeId = fat.id;
   validateStore(store);
@@ -1703,7 +1844,7 @@ var GBS_API = {
   validateLinkSummary: validateLinkSummary,
   attachLinkedSummary: attachLinkedSummary, removeLinkedSummary: removeLinkedSummary,
   linkedBlockHtml: linkedBlockHtml, linkedTextLines: linkedTextLines,
-  sampleStore: sampleStore, svgPlaceholder: svgPlaceholder
+  sampleStore: sampleStore, bikeDrawing: bikeDrawing
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = GBS_API;
 if (typeof window !== 'undefined') window.GBS = GBS_API;
