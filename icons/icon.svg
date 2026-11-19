@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Garage Build Sheets icon">
+  <rect x="8" y="8" width="496" height="496" rx="64" fill="#070709" stroke="#e8e8ec" stroke-width="10"/>
+  <rect x="118" y="96" width="276" height="320" rx="18" fill="#ededf2"/>
+  <rect x="118" y="96" width="276" height="56" rx="18" fill="#9d6bff"/>
+  <rect x="118" y="136" width="276" height="16" fill="#9d6bff"/>
+  <text x="256" y="136" font-family="serif" font-size="34" font-weight="bold" fill="#070709" text-anchor="middle">BUILD SHEET</text>
+  <rect x="150" y="196" width="150" height="18" rx="9" fill="#070709"/>
+  <rect x="150" y="238" width="212" height="18" rx="9" fill="#55555f"/>
+  <rect x="150" y="280" width="180" height="18" rx="9" fill="#55555f"/>
+  <rect x="150" y="322" width="212" height="18" rx="9" fill="#55555f"/>
+  <circle cx="352" cy="366" r="34" fill="none" stroke="#9d6bff" stroke-width="12"/>
+  <path d="M336 366 l12 12 l24 -26" fill="none" stroke="#9d6bff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
