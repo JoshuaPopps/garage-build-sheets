@@ -23,8 +23,8 @@
 /* Constants                                                           */
 /* ------------------------------------------------------------------ */
 
-var APP_VERSION = '1.0.2';
-var CACHE_NAME = 'garage-build-sheets-v3';
+var APP_VERSION = '1.0.3';
+var CACHE_NAME = 'garage-build-sheets-v4';
 
 var STYLES = [
   { id: 'treatment1990', name: '1990 Treatment',

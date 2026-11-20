@@ -1,6 +1,6 @@
 # Garage Build Sheets
 
-**Version 1.0.2** — a living build sheet for every bike in your garage. Add
+**Version 1.0.3** — a living build sheet for every bike in your garage. Add
 your bikes, list the modifications, upload your own photos (not stock
 photos), and get a stylized build sheet you can update over time and keep
 notes on. Built for the garage: phone-first, offline, no account, no server,
@@ -142,6 +142,6 @@ empty state instead of a blank screen.
 - `app.js` — browser shell: IndexedDB, photo downscale, rendering,
   forms, share-card drawing, downloads.
 - `styles.css` — 1990 Treatment base plus all six sheet styles.
-- `sw.js` — cache-first service worker (`garage-build-sheets-v3`).
+- `sw.js` — cache-first service worker (`garage-build-sheets-v4`).
 - `manifest.webmanifest`, `icons/` — PWA install files.
 - `test.js`, `test_ui.py` — see TESTING.md.
