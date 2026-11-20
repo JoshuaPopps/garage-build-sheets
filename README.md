@@ -1,6 +1,6 @@
 # Garage Build Sheets
 
-**Version 1.0.5** — a living build sheet for every bike in your garage. Add
+**Version 1.0.6** — a living build sheet for every bike in your garage. Add
 your bikes, list the modifications, upload your own photos (not stock
 photos), and get a stylized build sheet you can update over time and keep
 notes on. Built for the garage: phone-first, offline, no account, no server,
@@ -49,13 +49,12 @@ ignition-timing-helper).
   same way. All money on screen goes through one helper (`fmtMoney`)
   and one shared footer (`sheetFoot`), and the tests check every
   style's footer with money hidden.
-- **Connected apps** — the Build sheet tab has a Connected apps section
+- **Connected apps + shared bike roster** — the Build sheet tab has a Connected apps section
   linking this build to the sibling Pocket Garage apps: Bike
   Maintenance Log (service history), Carb Tune Journal (carb setups),
   Ignition Timing Helper (timing logs). Each row has a link that opens
-  the app in a new tab — the apps don't share a bike list yet, so you
-  pick the bike there; the section says so plainly. You can also attach
-  a sibling app's JSON export file to this build: the file holds that
+  the app in a new tab — the apps don't take a bike from a link, so you
+  pick the bike there. You can also attach a sibling app's JSON export file to this build: the file holds that
   app's own bike list, so if exactly one bike matches this build it
   links straight away, and if two or more could match, a small picker
   asks which one. The sheet then shows a compact summary — services
@@ -64,7 +63,22 @@ ignition-timing-helper).
   garage export. Linked dollars respect the Hide money toggle like the
   sheet's own figures. The dyno is not linked (a calculator, no
   per-bike records) and the Evo Wiring Planner has no JSON export to
-  attach. A shared bike roster across the suite is later work.
+  attach.
+- **Shared bike roster (Stage 2)** — one bike list for the whole garage, on the Garage tab.
+  Each build has one roster entry holding its identity in each sibling app: the bike's id
+  in the Maintenance Log and Carb Tune Journal exports, the bike's name in the Ignition
+  Timing Helper export (its export carries no ids, just a name per entry). Attaching an
+  export records that key, so the next export from the same sibling bike resolves by key
+  even if the bike was renamed over there — the name match is only the fallback for the
+  first attach. A roster key that isn't in the file being attached never silently
+  re-points: the picker asks, and picking re-points the link. Old exports that carry no
+  roster identity still attach by name, as before. The roster view shows, per bike, which
+  of the three apps are linked to it, and each linked app has an Unlink button (unlinking
+  drops the roster link and the summary together). Bikes and summaries from before the
+  roster migrate in place on load: nothing is wiped or orphaned, and a Stage 1 summary
+  keeps rendering — a timing summary hands its key over (the key is the name), and a
+  maintenance/carb summary with no recorded key stays attached until that export is
+  attached again, which pins it. The roster carries no money at all, only names and keys.
 - **Share (opt-in only)** — nothing is shared by default and nothing
   auto-posts. Tap Share and the app draws a 1080×1080 share-card PNG
   on-device (hero photo, bike name, style, progress, top parts) plus an
@@ -156,11 +170,11 @@ empty state instead of a blank screen.
 - `index.html` — shell: header, Garage / Build sheet / Data views, toast.
 - `store.js` — the engine: data model, styles registry, lifecycle math,
   money masking, sheet renderers, connected-apps parsing and summaries,
-  QR encoder, share text, export/import, seed data. Works in Node
+  the shared bike roster, QR encoder, share text, export/import, seed data. Works in Node
   (`module.exports`) and in the browser (`window.GBS`).
 - `app.js` — browser shell: IndexedDB, photo downscale, rendering,
   forms, share-card drawing, downloads.
 - `styles.css` — 1990 Treatment base plus all six sheet styles.
-- `sw.js` — cache-first service worker (`garage-build-sheets-v6`).
+- `sw.js` — cache-first service worker (`garage-build-sheets-v7`).
 - `manifest.webmanifest`, `icons/` — PWA install files.
 - `test.js`, `test_ui.py` — see TESTING.md.

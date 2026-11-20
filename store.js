@@ -23,8 +23,8 @@
 /* Constants                                                           */
 /* ------------------------------------------------------------------ */
 
-var APP_VERSION = '1.0.5';
-var CACHE_NAME = 'garage-build-sheets-v6';
+var APP_VERSION = '1.0.6';
+var CACHE_NAME = 'garage-build-sheets-v7';
 
 var STYLES = [
   { id: 'treatment1990', name: '1990 Treatment',
@@ -49,10 +49,13 @@ var STYLES = [
 var DEFAULT_STYLE = 'treatment1990';
 
 /* Sibling Pocket Garage apps a build sheet can link to. Each keeps
- * its own bike list and its own JSON export — there is no shared
- * bike identity yet, and none of these apps accepts a bike via URL,
- * so the links below open the app and the user picks the bike there.
- * The live URLs are the published Pages sites for each app. */
+ * its own bike list and its own JSON export, and none accepts a bike
+ * via URL, so the jump links below open the app and the user picks
+ * the bike there. What Stage 2 adds is the shared roster (see the
+ * roster section below): one roster entry per build, holding the
+ * bike's identity in each sibling app, so the same physical bike is
+ * ONE bike across all four apps instead of a fresh name match in
+ * each place. The live URLs are the published Pages sites. */
 var LINKED_APPS = [
   { id: 'maintenance', name: 'Bike Maintenance Log',
     blurb: 'Service history — tasks, intervals, what was done and when.',
@@ -224,6 +227,7 @@ function validateBike(b) {
   if (typeof b.base !== 'string' || !b.base.trim()) throw new Error('Bike needs a base (year/make/model).');
   if (STYLES.map(function (s) { return s.id; }).indexOf(b.styleId) === -1) throw new Error('Unknown style: ' + b.styleId);
   if (typeof b.hideMoney !== 'boolean') throw new Error('Bike hideMoney must be true/false.');
+  if (b.rosterId !== undefined && (typeof b.rosterId !== 'string' || !b.rosterId.trim())) throw new Error('Bike rosterId must be a string.');
   if (!Array.isArray(b.specs) || b.specs.length === 0) throw new Error('Bike needs a specs list.');
   b.specs.forEach(function (sp) {
     if (typeof sp.label !== 'string' || typeof sp.value !== 'string') throw new Error('Spec needs label and value strings.');
@@ -284,7 +288,7 @@ function validateIssue(i) {
   return true;
 }
 function emptyStore() {
-  return { version: 1, bikes: [], mods: [], photos: [], notes: [], issues: [], selectedBikeId: null };
+  return { version: 1, bikes: [], mods: [], photos: [], notes: [], issues: [], roster: [], selectedBikeId: null };
 }
 
 /* ------------------------------------------------------------------ */
@@ -331,6 +335,22 @@ function validateStore(s) {
   s.photos.forEach(validatePhoto);
   s.notes.forEach(validateNote);
   s.issues.forEach(validateIssue);
+  /* The roster is optional in a stored file — a garage saved before
+   * the roster has none, and migrateStore adds it on load. When one
+   * is present it must be sound, and every bike's rosterId must
+   * point at a real entry. */
+  if (s.roster !== undefined) {
+    if (!Array.isArray(s.roster)) throw new Error('Store roster must be an array.');
+    s.roster.forEach(validateRosterEntry);
+    var rosterIds = {};
+    s.roster.forEach(function (e) {
+      if (rosterIds[e.id]) throw new Error('Duplicate roster entry: ' + e.id);
+      rosterIds[e.id] = true;
+    });
+    s.bikes.forEach(function (b) {
+      if (b.rosterId && !rosterIds[b.rosterId]) throw new Error('Bike points at a missing roster entry.');
+    });
+  }
   var bikeIds = {};
   s.bikes.forEach(function (b) { bikeIds[b.id] = true; });
   s.mods.forEach(function (m) { if (!bikeIds[m.bikeId]) throw new Error('Mod points at a missing bike.'); });
@@ -976,7 +996,7 @@ function renderSheet(styleId, bike, ctx) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Connected apps — Stage 1.                                         */
+/* Connected apps — Stage 2: the shared bike roster.                 */
 /*                                                                     */
 /* The sibling Pocket Garage apps each keep their own bike list and   */
 /* their own JSON export, and none accepts a bike via URL. So a       */
@@ -987,15 +1007,203 @@ function renderSheet(styleId, bike, ctx) {
 /*      JSON export file, picks which bike in that file matches this  */
 /*      build, and a compact summary is stored on the bike and       */
 /*      shown on the sheet.                                           */
-/* A shared bike roster across the suite is later work — this stage   */
-/* does not pretend one exists.                                        */
+/*                                                                     */
+/* Stage 2 is the roster that ties those summaries to ONE bike:      */
+/*                                                                     */
+/* - `store.roster` holds one entry per build: { id, name, base,     */
+/*   linked: { maintenance, carb, timing } }. Each linked value is   */
+/*   the bike's key in that sibling app's export — the bike id for    */
+/*   Maintenance and Carb (their exports key bikes by id), the bike  */
+/*   name for Timing (its export carries no ids, just a bike name    */
+/*   per entry). A build points at its entry with `bike.rosterId`.    */
+/* - Attaching an export records the key it attached to              */
+/*   (`summary.sourceKey` + `roster.linked[app]`), so the NEXT       */
+/*   export from the same sibling bike resolves by that key even if  */
+/*   the bike was renamed over there — the name match is only the    */
+/*   fallback for the first attach.                                   */
+/* - A roster key that is NOT in the file being attached is never    */
+/*   silently worked around: the attach is ambiguous and the user    */
+/*   picks, and picking re-points the roster link to the bike they   */
+/*   chose. A name match that finds zero or two-plus bikes asks too, */
+/*   exactly as Stage 1 did.                                          */
+/* - Old exports that carry no roster identity still attach the      */
+/*   Stage 1 way (by name, as before). Bikes created before the      */
+/*   roster, and summaries attached under Stage 1, are migrated in   */
+/*   place on load (see migrateStore): nothing is wiped or orphaned. */
+/*   A Stage 1 summary keeps rendering; its roster link is filled    */
+/*   in from what the summary already knows (Timing's key IS the     */
+/*   name; newer summaries carry sourceKey), and a maintenance/carb  */
+/*   summary with no recorded key stays attached unlinked until the  */
+/*   export is attached again, which pins it.                        */
 /*                                                                     */
 /* Money rule, same as everywhere else: every dollar in a linked      */
 /* summary goes through fmtMoney, and free text through scrubMoney.   */
-/* The linked block is rendered by ONE shared helper inside every     */
-/* style's sheet, so a style can never leak a linked dollar while     */
-/* another masks it.                                                   */
+/* The roster itself carries no money at all — only names and keys —  */
+/* so there is nothing for hide-money to mask in it. The linked      */
+/* block is rendered by ONE shared helper inside every style's       */
+/* sheet, so a style can never leak a linked dollar while another    */
+/* masks it.                                                           */
 /* ------------------------------------------------------------------ */
+
+/* One roster entry: the shared identity of one physical bike. */
+function newRosterEntry(name, base) {
+  return {
+    id: newId('roster'), name: String(name || 'Bike'), base: String(base || ''),
+    linked: { maintenance: null, carb: null, timing: null }
+  };
+}
+function validateRosterEntry(e) {
+  if (!e || typeof e !== 'object') throw new Error('Roster entry must be an object.');
+  if (typeof e.id !== 'string' || !e.id.trim()) throw new Error('Roster entry needs an id.');
+  if (typeof e.name !== 'string' || !e.name.trim()) throw new Error('Roster entry needs a name.');
+  if (typeof e.base !== 'string') throw new Error('Roster entry base must be a string.');
+  if (!e.linked || typeof e.linked !== 'object' || Array.isArray(e.linked)) throw new Error('Roster entry needs a linked map.');
+  Object.keys(e.linked).forEach(function (k) {
+    if (!linkedAppById(k)) throw new Error('Unknown linked app in roster: ' + k);
+    if (e.linked[k] !== null && (typeof e.linked[k] !== 'string' || !e.linked[k].trim())) {
+      throw new Error('Roster link must be a bike key or null.');
+    }
+  });
+  return true;
+}
+/* The roster entry a build points at, or null. */
+function rosterForBike(store, bike) {
+  if (!store || !Array.isArray(store.roster)) return null;
+  var id = bike && bike.rosterId;
+  if (!id) return null;
+  for (var i = 0; i < store.roster.length; i++) if (store.roster[i].id === id) return store.roster[i];
+  return null;
+}
+/* Return the bike's roster entry, creating it (and pointing the
+ * bike at it) when the bike has none. */
+function ensureRosterForBike(store, bike) {
+  if (!store || typeof store !== 'object') throw new Error('ensureRosterForBike needs a store.');
+  if (!bike || typeof bike !== 'object') throw new Error('ensureRosterForBike needs a bike.');
+  if (!Array.isArray(store.roster)) store.roster = [];
+  var entry = rosterForBike(store, bike);
+  if (entry) return entry;
+  entry = newRosterEntry(bike.name, bike.base);
+  store.roster.push(entry);
+  bike.rosterId = entry.id;
+  return entry;
+}
+/* Drop roster entries no bike points at (a deleted bike's entry).
+ * The roster view only ever lists bikes, so an orphan is invisible
+ * anyway — this just keeps the stored list honest. */
+function pruneRoster(store) {
+  if (!store || !Array.isArray(store.roster)) return store;
+  var used = {};
+  (store.bikes || []).forEach(function (b) { if (b.rosterId) used[b.rosterId] = true; });
+  store.roster = store.roster.filter(function (e) { return used[e.id]; });
+  return store;
+}
+/* Bring a pre-roster store up to the roster shape, in place.
+ * Idempotent: a second call changes nothing. Every bike ends up
+ * with a rosterId pointing at a real entry; every entry is
+ * well-formed; orphans are pruned; and Stage 1 summaries hand over
+ * whatever identity they already carry (a timing summary's key is
+ * its bike name; any summary with a sourceKey hands that over). A
+ * maintenance/carb summary from before the roster has no recorded
+ * key, so its link stays empty until that export is attached again
+ * — the summary itself is untouched and keeps rendering. */
+function migrateStore(s) {
+  if (!s || typeof s !== 'object') throw new Error('migrateStore needs a store.');
+  if (!Array.isArray(s.roster)) s.roster = [];
+  var seen = {};
+  s.roster = s.roster.filter(function (e) {
+    if (!e || typeof e !== 'object' || typeof e.id !== 'string' || !e.id.trim() || seen[e.id]) return false;
+    seen[e.id] = true;
+    if (typeof e.name !== 'string' || !e.name.trim()) e.name = 'Bike';
+    if (typeof e.base !== 'string') e.base = '';
+    if (!e.linked || typeof e.linked !== 'object' || Array.isArray(e.linked)) e.linked = {};
+    LINKED_APPS.forEach(function (a) {
+      if (e.linked[a.id] !== null && typeof e.linked[a.id] !== 'string') e.linked[a.id] = null;
+      if (typeof e.linked[a.id] === 'string' && !e.linked[a.id].trim()) e.linked[a.id] = null;
+    });
+    return true;
+  });
+  (s.bikes || []).forEach(function (b) {
+    var entry = rosterForBike(s, b);
+    if (!entry) {
+      entry = newRosterEntry(b.name, b.base);
+      s.roster.push(entry);
+      b.rosterId = entry.id;
+    }
+    if (b.links) {
+      Object.keys(b.links).forEach(function (app) {
+        var sum = b.links[app];
+        if (!sum || !linkedAppById(app) || entry.linked[app]) return;
+        if (app === 'timing' && sum.sourceBike) entry.linked[app] = sum.sourceBike;
+        else if (sum.sourceKey) entry.linked[app] = sum.sourceKey;
+      });
+    }
+  });
+  return pruneRoster(s);
+}
+/* Record that this build IS a given bike in a sibling app. Used
+ * when an export attaches, and when the user picks a bike in the
+ * ambiguous picker (which re-points the link). */
+function recordRosterLink(store, bike, app, key) {
+  if (!store || typeof store !== 'object') throw new Error('recordRosterLink needs a store.');
+  if (!bike || typeof bike !== 'object') throw new Error('recordRosterLink needs a bike.');
+  if (!linkedAppById(app)) throw new Error('Unknown linked app: ' + app);
+  if (typeof key !== 'string' || !key.trim()) throw new Error('Roster link needs a bike key.');
+  var entry = ensureRosterForBike(store, bike);
+  entry.linked[app] = key;
+  return entry;
+}
+/* Unlink a build from one sibling app: the roster link goes and
+ * the attached summary goes with it, so the sheet stops showing
+ * that app for this build. The other apps are untouched. */
+function unlinkRosterIdentity(store, bike, app) {
+  if (!store || typeof store !== 'object') throw new Error('unlinkRosterIdentity needs a store.');
+  if (!bike || typeof bike !== 'object') throw new Error('unlinkRosterIdentity needs a bike.');
+  if (!linkedAppById(app)) throw new Error('Unknown linked app: ' + app);
+  var entry = rosterForBike(store, bike);
+  if (entry && entry.linked) entry.linked[app] = null;
+  removeLinkedSummary(bike, app);
+  return bike;
+}
+/* Per-app link status for one build, for the roster view. No money
+ * anywhere in it — names and keys only — so hide-money has nothing
+ * to mask here. hasSummary is true for a Stage 1 summary attached
+ * before the roster recorded a key: it still renders on the sheet,
+ * and attaching that app's export again pins it to the roster. */
+function rosterLinkStatus(store, bike) {
+  return LINKED_APPS.map(function (a) {
+    var entry = rosterForBike(store, bike);
+    var key = entry && entry.linked ? entry.linked[a.id] : null;
+    var summary = bike && bike.links ? bike.links[a.id] : null;
+    return {
+      app: a.id, name: a.name,
+      linked: !!key, key: key || null,
+      hasSummary: !!summary, sourceBike: summary ? summary.sourceBike : null
+    };
+  });
+}
+/* Resolve which candidate bike in a sibling export this build is.
+ * Roster first: when the roster knows this build's key in that app
+ * and the file holds that key, that is the answer — even if the
+ * bike was renamed over there since the last attach. When the
+ * roster knows a key the file does NOT hold, the file may be from
+ * another garage or the bike may have been rebuilt over there, so
+ * the attach is ambiguous and the user picks (rosterMiss). With no
+ * roster key yet, the Stage 1 name match decides, exactly as
+ * before — old exports that carry no roster identity attach by
+ * name. Returns { matched, ambiguous, via, rosterMiss }. */
+function resolveLinkedCandidate(store, bike, app, parsed) {
+  if (!linkedAppById(app)) throw new Error('Unknown linked app: ' + app);
+  var candidates = (parsed && parsed.candidates) || [];
+  var entry = store ? rosterForBike(store, bike) : null;
+  var key = entry && entry.linked ? entry.linked[app] : null;
+  if (key) {
+    var byKey = candidates.filter(function (c) { return c.key === key; });
+    if (byKey.length === 1) return { matched: byKey[0], ambiguous: false, via: 'roster', rosterMiss: false };
+    return { matched: null, ambiguous: true, via: null, rosterMiss: true };
+  }
+  var m = matchLinkedCandidate(bike, candidates);
+  return { matched: m.matched, ambiguous: m.ambiguous, via: m.matched ? 'name' : null, rosterMiss: false };
+}
 
 /* Normalize a bike name for matching: lowercase, letters and
  * digits only. "1995 Fat Boy Bobber" -> "1995fatboybobber". */
@@ -1169,10 +1377,13 @@ function buildLinkedSummary(app, raw, key) {
   };
 }
 
-/* Validate one linked summary. Throws on garbage. */
+/* Validate one linked summary. Throws on garbage. A summary may
+ * carry sourceKey — the bike's key in the sibling app's export,
+ * recorded when it attached (see attachLinkedSummary). */
 function validateLinkSummary(app, s) {
   if (!s || typeof s !== 'object' || s.app !== app) throw new Error('Linked summary must be an object for ' + app + '.');
   if (typeof s.sourceBike !== 'string' || !s.sourceBike.trim()) throw new Error('Linked summary needs a source bike name.');
+  if (s.sourceKey !== undefined && (typeof s.sourceKey !== 'string' || !s.sourceKey.trim())) throw new Error('Linked summary sourceKey must be a string.');
   if (app === 'maintenance') {
     if (typeof s.tasksDone !== 'number' || s.tasksDone < 0) throw new Error('Maintenance summary needs tasksDone.');
     if (s.totalSpent !== null && (typeof s.totalSpent !== 'number' || s.totalSpent < 0)) throw new Error('Maintenance summary totalSpent must be a number or null.');
@@ -1193,9 +1404,17 @@ function validateLinkSummary(app, s) {
   return true;
 }
 
-function attachLinkedSummary(bike, summary) {
+/* Attach a summary to a bike. sourceKey is the candidate key it
+ * attached to in the sibling export (optional — Stage 1 callers
+ * pass none); when given it is stored on the summary so the roster
+ * migration and the next attach can resolve by key. */
+function attachLinkedSummary(bike, summary, sourceKey) {
   if (!bike || typeof bike !== 'object') throw new Error('attachLinkedSummary needs a bike.');
   validateLinkSummary(summary.app, summary);
+  if (sourceKey !== undefined && sourceKey !== null) {
+    if (typeof sourceKey !== 'string' || !sourceKey.trim()) throw new Error('attachLinkedSummary needs a bike key.');
+    summary.sourceKey = sourceKey;
+  }
   bike.links = bike.links || {};
   bike.links[summary.app] = summary;
   validateBike(bike);
@@ -1496,6 +1715,10 @@ function validateImport(raw) {
   try { data = JSON.parse(raw); } catch (e) { throw new Error('Not valid JSON.'); }
   if (!data || typeof data !== 'object') throw new Error('Import must be a store object or a single bike.');
   if (!Array.isArray(data.bikes) && data.name && Array.isArray(data.mods)) data = mockupBikeToStore(data);
+  /* Pre-roster files migrate in place here: every bike gets a
+   * roster entry and Stage 1 summaries hand over what they know,
+   * so an old export lands exactly as it would have before. */
+  migrateStore(data);
   validateStore(data);
   var photoData = {};
   data.photos.forEach(function (p) {
@@ -1532,6 +1755,8 @@ function validateImport(raw) {
  * - The imported bikes arrive with their mods, photos, notes,
  *   issues, linked summaries, and hideMoney flag intact — merge
  *   only re-keys and re-labels, it never edits a build's content.
+ *   Each imported bike also keeps its own roster entry (fresh id)
+ *   with its linked-app identities carried over.
  * - The existing selection stands; an empty garage selects the
  *   first imported bike.
  * Neither input store is mutated. */
@@ -1541,10 +1766,17 @@ function mergeImport(existing, incoming) {
   validateStore(existing);
   validateStore(incoming);
   var merged = JSON.parse(JSON.stringify(existing));
+  if (!Array.isArray(merged.roster)) merged.roster = [];
   var takenNames = {};
   merged.bikes.forEach(function (b) { takenNames[normalizeName(b.name)] = true; });
   var bikeIdMap = {}, photoIdMap = {}, modIdMap = {};
   var renamed = [], addedBikeIds = [];
+  /* The incoming file's roster, keyed by its old entry ids — each
+   * imported bike keeps its own entry (fresh id) with its linked
+   * identities carried over, so a merged bike stays one bike
+   * across the apps it was already linked to. */
+  var incomingRosterById = {};
+  (incoming.roster || []).forEach(function (e) { incomingRosterById[e.id] = e; });
   incoming.bikes.forEach(function (ib) {
     var bike = JSON.parse(JSON.stringify(ib));
     var oldId = bike.id;
@@ -1561,6 +1793,15 @@ function mergeImport(existing, incoming) {
     takenNames[normalizeName(name)] = true;
     bike.name = name;
     bike.imported = true;
+    var oldEntry = ib.rosterId ? incomingRosterById[ib.rosterId] : null;
+    var newEntry = newRosterEntry(bike.name, bike.base);
+    if (oldEntry && oldEntry.linked) {
+      LINKED_APPS.forEach(function (a) {
+        if (oldEntry.linked[a.id]) newEntry.linked[a.id] = oldEntry.linked[a.id];
+      });
+    }
+    merged.roster.push(newEntry);
+    bike.rosterId = newEntry.id;
     merged.bikes.push(bike);
     addedBikeIds.push(bike.id);
   });
@@ -1887,6 +2128,7 @@ function sampleStore() {
     mkPhoto(soft.id, 'photo-softail-after', 'after', 'Example photo — Softail as it sits now')
   );
   store.selectedBikeId = fat.id;
+  migrateStore(store);
   validateStore(store);
   return store;
 }
@@ -1928,6 +2170,12 @@ var GBS_API = {
   LINKED_APPS: LINKED_APPS, linkedAppById: linkedAppById,
   normalizeName: normalizeName, namesMatch: namesMatch,
   matchLinkedCandidate: matchLinkedCandidate,
+  resolveLinkedCandidate: resolveLinkedCandidate,
+  newRosterEntry: newRosterEntry, validateRosterEntry: validateRosterEntry,
+  rosterForBike: rosterForBike, ensureRosterForBike: ensureRosterForBike,
+  migrateStore: migrateStore, pruneRoster: pruneRoster,
+  recordRosterLink: recordRosterLink, unlinkRosterIdentity: unlinkRosterIdentity,
+  rosterLinkStatus: rosterLinkStatus,
   parseLinkedExport: parseLinkedExport, buildLinkedSummary: buildLinkedSummary,
   validateLinkSummary: validateLinkSummary,
   attachLinkedSummary: attachLinkedSummary, removeLinkedSummary: removeLinkedSummary,

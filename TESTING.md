@@ -107,6 +107,26 @@ Covered:
   CONNECTED APPS block masks the same way; a hidden-money export nulls
   the linked spend, marks `costHidden`, and carries no `$`); the registry
   holds exactly the 3 linked apps, all pointing at the live Pages URLs.
+- **Shared bike roster (Stage 2)** — the seed store carries a roster with
+  one entry per bike (distinct ids, all three app links empty); a
+  pre-roster store (roster array and `rosterId`s stripped, Stage 1
+  summaries attached with no recorded key) migrates in place without
+  loss — every bike gets a roster entry, the summaries keep rendering,
+  the timing link is recovered from the summary's bike name while the
+  maintenance/carb links stay empty until that export attaches again —
+  and migrating twice changes nothing; attaching all three apps' exports
+  to one bike lands them on the same roster entry; a roster identity is
+  stable when the sibling renames the bike (a renamed maintenance export
+  resolves by key where the name match finds nothing); a roster key
+  missing from the file asks instead of guessing (`rosterMiss`); with no
+  roster link yet the old name match decides, and two name matches still
+  ask; unlinking drops one app's summary and roster link and keeps the
+  others; the roster survives the export/import round-trip and a merge
+  (a pre-roster file merged in still gives every bike an entry);
+  `pruneRoster` drops a deleted bike's entry; the roster link status
+  carries no `$` for a hidden-money bike; validation rejects a bike
+  pointing at a missing roster entry, duplicate roster ids, and a
+  roster link to an unknown app.
 
 ## QR verification (independent decoders)
 
@@ -158,8 +178,12 @@ copy; attaching a maintenance export lands "2 services logged" and
 ("Super E (on-bike) — main 0.076, pilot 0.0295"), and an ambiguous
 timing file opens the bike picker (2 options) and links the picked bike
 ("Timed 20° BTDC"); linked dollars hide with the toggle and return with
-it; all three links survive a reload; removing the maintenance link
-leaves the carb and timing links on the sheet; **import merge** — picking
+it; all three links survive a reload; **shared bike roster** — the Garage tab shows one
+roster card per bike, the Fat Boy's card lists all three apps Linked with their source
+bike names while the other bikes show Not linked; unlinking Maintenance from the roster
+drops its summary and leaves the other two linked; re-attaching the same maintenance
+file resolves by name again and re-pins the roster link; the roster links survive a
+reload; removing the maintenance link leaves the carb and timing links on the sheet; **import merge** — picking
 a file first asks Merge or Replace (the choice names the file's bike);
 Merge adds the bike without removing the garage, keeps both bikes on a
 name clash with the imported one labelled "1995 Fat Boy Bobber

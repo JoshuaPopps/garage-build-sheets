@@ -285,7 +285,15 @@ function init() {
   bindStatic();
   kvGet(STORE_KEY).then(function (saved) {
     if (saved) {
-      try { GBS.validateStore(saved); store = saved; }
+      try {
+        /* Migrate first: a garage saved before the roster has no
+         * roster array, and a bike whose roster entry went missing
+         * gets a fresh one — migration heals, validation only
+         * checks, so a healable file must never fall through to
+         * the examples. */
+        store = GBS.migrateStore(saved);
+        GBS.validateStore(store);
+      }
       catch (e) { store = GBS.sampleStore(); store._firstRun = true; }
     } else {
       store = GBS.sampleStore();
@@ -394,7 +402,8 @@ function renderGarage() {
   var grid = document.getElementById('garageGrid');
   var empty = document.getElementById('garageEmpty');
   empty.hidden = store.bikes.length > 0;
-  if (!store.bikes.length) { grid.innerHTML = ''; return; }
+  var rosterWrap = document.getElementById('rosterWrap');
+  if (!store.bikes.length) { grid.innerHTML = ''; if (rosterWrap) rosterWrap.innerHTML = ''; return; }
   grid.innerHTML = store.bikes.map(function (b) {
     var mods = GBS.modsFor(store, b.id);
     var photos = GBS.photosFor(store, b.id);
@@ -418,6 +427,7 @@ function renderGarage() {
       '</span></button>';
   }).join('');
   document.getElementById('bikeFormWrap').innerHTML = ui.showBikeForm ? bikeFormHTML(ui.editingBikeId ? findBike(ui.editingBikeId) : null) : '';
+  if (rosterWrap) rosterWrap.innerHTML = rosterHTML();
 }
 function findBike(id) {
   for (var i = 0; i < store.bikes.length; i++) if (store.bikes[i].id === id) return store.bikes[i];
@@ -575,13 +585,16 @@ function handoffPanelHTML(bike) {
     '<button type="button" class="secondary" data-action="handoff-close">Close</button></div>';
   return h;
 }
-/* Connected apps — Stage 1. Jump links open the sibling app (the
+/* Connected apps — Stage 2. Jump links open the sibling app (the
  * user picks the bike there; no deep link exists yet) and a sibling
- * export file can be attached so this sheet shows a summary. */
+ * export file can be attached so this sheet shows a summary. The
+ * shared roster remembers which bike that was over there, so the
+ * next export from the same bike lands on this build without
+ * asking again. */
 function connectedAppsHTML(bike) {
   var h = '<section class="connected-apps no-print" aria-label="Connected apps"><h3>Connected apps</h3>' +
-    '<p class="muted">Your other Pocket Garage apps keep their own records. Link one here and this sheet shows a summary of it. ' +
-    'The links below open the app in a new tab &mdash; pick the bike there; the apps don&rsquo;t share a bike list yet.</p>';
+    '<p class="muted">Your other Pocket Garage apps keep their own records. Link one here and this sheet shows a summary of it — and the shared roster remembers which bike it is over there, so the next export from that app lands on this build without asking again. ' +
+    'The links below open the app in a new tab &mdash; pick the bike there; the apps don&rsquo;t take a bike from a link.</p>';
   h += GBS.LINKED_APPS.map(function (a) {
     var s = bike.links && bike.links[a.id];
     var row = '<div class="card link-row"><h4>' + esc(a.name) + '</h4>' +
@@ -603,6 +616,7 @@ function connectedAppsHTML(bike) {
     var app = GBS.linkedAppById(pk.app);
     h += '<div class="card link-picker"><h4>Which bike is this?</h4>' +
       '<p class="muted">That ' + esc(app.name) + ' file has more than one bike that could be this build. Pick the one that matches.</p>' +
+      (pk.rosterMiss ? '<p class="muted"><strong>The roster link for this build isn&rsquo;t in this file</strong> — it may be from another garage, or the bike was rebuilt over there. Pick the right bike and the roster link moves to it.</p>' : '') +
       '<label>Matching bike<select id="linkPickSelect">' +
       pk.candidates.map(function (c) {
         return '<option value="' + esc(c.key) + '">' + esc(c.name) + ' — ' + esc(c.detail) + '</option>';
@@ -610,6 +624,35 @@ function connectedAppsHTML(bike) {
       '<p><button type="button" data-action="link-confirm">Link this bike</button> ' +
       '<button type="button" class="secondary" data-action="link-cancel">Cancel</button></p></div>';
   }
+  return h + '</section>';
+}
+/* Shared bike roster — one list for the whole garage. Each bike
+ * shows which of the three sibling apps it is linked to, with an
+ * Unlink button per linked app. Attaching happens on the build
+ * sheet (Connected apps); unlinking can happen here or there. */
+function rosterHTML() {
+  if (!store.bikes.length) return '';
+  var h = '<section class="roster no-print" aria-label="Shared bike roster"><h3>Shared bike roster</h3>' +
+    '<p class="muted">One bike list for the whole garage — the same physical bike is one bike in the Maintenance Log, the Carb Tune Journal, and the Ignition Timing Helper. ' +
+    'When you attach an export on a build sheet, the roster remembers which bike it was over there, so the next export from that app lands on the same build without asking.</p>';
+  h += store.bikes.map(function (b) {
+    var rows = GBS.rosterLinkStatus(store, b).map(function (st) {
+      var line;
+      if (st.linked) {
+        line = '<span class="linked-status">Linked' + (st.sourceBike ? ': ' + esc(GBS.scrubMoney(st.sourceBike, b.hideMoney)) : '') + '</span> ' +
+          '<button type="button" class="small secondary" data-action="roster-unlink" data-id="' + esc(b.id) + '" data-app="' + esc(st.app) + '">Unlink</button>';
+      } else if (st.hasSummary) {
+        line = '<span class="muted">Summary attached, not roster-linked yet — attach that app&rsquo;s export again on the sheet to pin it.</span>';
+      } else {
+        line = '<span class="muted">Not linked</span>';
+      }
+      return '<li><b>' + esc(st.name) + '</b> — ' + line + '</li>';
+    }).join('');
+    return '<div class="card roster-card"><h4>' + esc(b.name) +
+      (b.isExample ? ' <span class="badge example">Example</span>' : '') +
+      (b.hideMoney ? ' <span class="badge money-hidden">Money hidden</span>' : '') + '</h4>' +
+      '<p class="muted">' + esc(b.base) + '</p><ul class="roster-apps">' + rows + '</ul></div>';
+  }).join('');
   return h + '</section>';
 }
 function sharePanelHTML(bike, ctx) {
@@ -1090,7 +1133,9 @@ function onClick(ev) {
       var appR = el.getAttribute('data-app');
       var appObj = GBS.linkedAppById(appR);
       if (!window.confirm('Remove the linked ' + (appObj ? appObj.name : appR) + ' summary from this build?')) break;
-      GBS.removeLinkedSummary(bike, appR);
+      /* Unlinking drops the roster link too, so the next attach
+       * from that app starts from the name match again. */
+      GBS.unlinkRosterIdentity(store, bike, appR);
       persist().then(render).then(function () { showToast('Link removed.'); });
       break;
     }
@@ -1104,6 +1149,16 @@ function onClick(ev) {
       break;
     }
     case 'link-cancel': ui.linkPicker = null; render(); break;
+    case 'roster-unlink': {
+      var rb = findBike(id);
+      if (!rb) break;
+      var rapp = el.getAttribute('data-app');
+      var rappObj = GBS.linkedAppById(rapp);
+      if (!window.confirm('Unlink "' + rb.name + '" from the ' + (rappObj ? rappObj.name : rapp) + '? Its summary leaves the sheet.')) break;
+      GBS.unlinkRosterIdentity(store, rb, rapp);
+      persist().then(render).then(function () { showToast('Unlinked from ' + (rappObj ? rappObj.name : rapp) + '.'); });
+      break;
+    }
   }
 }
 function onChange(ev) {
@@ -1353,12 +1408,17 @@ function deleteBike(id) {
   var mods = GBS.modsFor(store, id), photos = GBS.photosFor(store, id);
   var notes = GBS.notesFor(store, id), issues = GBS.issuesFor(store, id);
   if (!window.confirm('Delete "' + bike.name + '" and everything on its sheet — ' + mods.length + ' parts, ' + photos.length + ' photos, ' + notes.length + ' notes, ' + issues.length + ' issues? This cannot be undone.')) return;
-  var snapshot = { bike: bike, mods: mods, photos: photos, notes: notes, issues: issues };
+  var snapshot = { bike: bike, mods: mods, photos: photos, notes: notes, issues: issues,
+    rosterEntry: GBS.rosterForBike(store, bike) };
   store.bikes = store.bikes.filter(function (b) { return b.id !== id; });
   store.mods = store.mods.filter(function (m) { return m.bikeId !== id; });
   store.photos = store.photos.filter(function (p) { return p.bikeId !== id; });
   store.notes = store.notes.filter(function (n) { return n.bikeId !== id; });
   store.issues = store.issues.filter(function (i) { return i.bikeId !== id; });
+  /* The bike's roster entry goes with it — a deleted bike leaves
+   * no link behind for another bike to inherit by accident. Undo
+   * puts it back. */
+  if (snapshot.rosterEntry) GBS.pruneRoster(store);
   photos.forEach(function (p) { if (!p.dataUrl) pendingBlobDeletes.push(p.id); });
   if (store.selectedBikeId === id) store.selectedBikeId = store.bikes.length ? store.bikes[0].id : null;
   ui.tagMode = false; ui.tagPopoverModId = null;
@@ -1369,6 +1429,10 @@ function deleteBike(id) {
     store.photos = snapshot.photos.concat(store.photos);
     store.notes = snapshot.notes.concat(store.notes);
     store.issues = snapshot.issues.concat(store.issues);
+    if (snapshot.rosterEntry) {
+      if (!Array.isArray(store.roster)) store.roster = [];
+      if (!GBS.rosterForBike(store, snapshot.bike)) store.roster.push(snapshot.rosterEntry);
+    }
     store.selectedBikeId = snapshot.bike.id;
     pendingBlobDeletes = pendingBlobDeletes.filter(function (pid) { return !snapshot.photos.some(function (p) { return p.id === pid; }); });
   });
@@ -1496,12 +1560,16 @@ function handleLinkFile(input) {
     var parsed;
     try { parsed = GBS.parseLinkedExport(app, String(reader.result)); }
     catch (e) { showToast('That file could not be linked: ' + e.message); return; }
-    var match = GBS.matchLinkedCandidate(bike, parsed.candidates);
+    /* Roster first: a build already linked to a bike in that app
+     * re-attaches to the same bike by its key, even if it was
+     * renamed over there. Anything else that is not exactly one
+     * name match asks — never guesses. */
+    var match = GBS.resolveLinkedCandidate(store, bike, app, parsed);
     if (!match.ambiguous) {
       attachLinkFromRaw(app, bike, String(reader.result), match.matched.key, file.name);
       return;
     }
-    ui.linkPicker = { app: app, bikeId: bike.id, raw: String(reader.result), candidates: parsed.candidates, fileName: file.name };
+    ui.linkPicker = { app: app, bikeId: bike.id, raw: String(reader.result), candidates: parsed.candidates, fileName: file.name, rosterMiss: !!match.rosterMiss };
     render();
   };
   reader.onerror = function () { showToast('Could not read that file.'); };
@@ -1513,7 +1581,12 @@ function attachLinkFromRaw(app, bike, raw, key, fileName) {
   catch (e) { showToast('That file could not be linked: ' + e.message); return; }
   summary.importedAt = GBS.todayISO();
   summary.sourceFile = fileName || '';
-  try { GBS.attachLinkedSummary(bike, summary); }
+  try {
+    GBS.attachLinkedSummary(bike, summary, key);
+    /* Pin the roster: this build IS that bike in this app now, so
+     * the next export from it resolves by key, not by name. */
+    GBS.recordRosterLink(store, bike, app, key);
+  }
   catch (e) { showToast('That file could not be linked: ' + e.message); return; }
   ui.linkPicker = null;
   persist().then(render).then(function () {

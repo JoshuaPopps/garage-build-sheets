@@ -484,6 +484,72 @@ def main():
               and "main 0.076" in page.locator(".sheet").first.inner_text()
               and "Timed 20° BTDC" in page.locator(".sheet").first.inner_text())
 
+        # Shared bike roster: one list for the whole garage.
+        page.click('[data-nav="garage"]')
+        page.wait_for_selector(".roster", timeout=5000)
+        roster = page.locator(".roster")
+        check("roster section lists all 4 bikes", roster.locator(".roster-card").count() == 4)
+        fat_roster = roster.locator(".roster-card", has_text="1995 Fat Boy Bobber")
+        check("roster shows all three apps linked to the Fat Boy",
+              "Bike Maintenance Log — Linked: 1995 Fat Boy Bobber" in fat_roster.inner_text()
+              and "Carb Tune Journal — Linked: 1995 Fat Boy Bobber" in fat_roster.inner_text()
+              and "Ignition Timing Helper — Linked: 1995 Fat Boy" in fat_roster.inner_text())
+        check("roster shows the other bikes unlinked",
+              roster.locator(".roster-card", has_text="1947 Knucklehead").inner_text().count("Not linked") == 3
+              and roster.locator(".roster-card", has_text="1990 Softail").inner_text().count("Not linked") == 3
+              and roster.locator(".roster-card", has_text="Test Sportster").inner_text().count("Not linked") == 3)
+
+        # Unlink maintenance from the roster: the summary leaves the sheet.
+        page.once("dialog", lambda d: d.accept())
+        fat_roster.locator("li", has_text="Bike Maintenance Log").locator('[data-action="roster-unlink"]').click()
+        page.wait_for_function(
+            "() => document.getElementById('toastMsg') && "
+            "document.getElementById('toastMsg').innerText.includes('Unlinked from Bike Maintenance Log')",
+            timeout=5000)
+        check("roster unlink drops the maintenance link",
+              "Bike Maintenance Log — Linked" not in fat_roster.inner_text())
+        check("roster unlink leaves the other apps linked",
+              "Carb Tune Journal — Linked" in fat_roster.inner_text()
+              and "Ignition Timing Helper — Linked" in fat_roster.inner_text())
+
+        # Re-attach the same maintenance file: with the roster link
+        # cleared it resolves by name again, and the roster re-pins.
+        page.locator(".bike-card", has_text="1995 Fat Boy Bobber").click()
+        page.wait_for_selector("#detailWrap .hero-wrap", timeout=10000)
+        page.locator('[data-action="tab"][data-id="sheet"]').click()
+        page.wait_for_selector(".connected-apps", timeout=5000)
+        page.set_input_files("#linkFile-maintenance", maint_path)
+        page.wait_for_function(
+            "() => document.getElementById('detailWrap').innerText.includes('2 services logged')",
+            timeout=5000)
+        check("maintenance re-attaches after a roster unlink",
+              "2 services logged" in page.locator(".sheet").first.inner_text())
+        page.click('[data-nav="garage"]')
+        page.wait_for_selector(".roster", timeout=5000)
+        check("roster re-pins the maintenance link after re-attach",
+              "Bike Maintenance Log — Linked: 1995 Fat Boy Bobber" in
+              page.locator(".roster-card", has_text="1995 Fat Boy Bobber").inner_text())
+
+        # Roster survives a reload, then back to the sheet for the
+        # link-removal checks below.
+        page.reload()
+        page.wait_for_selector(".bike-card", timeout=15000)
+        page.locator(".bike-card", has_text="1995 Fat Boy Bobber").click()
+        page.wait_for_selector("#detailWrap .hero-wrap", timeout=10000)
+        page.click('[data-nav="garage"]')
+        page.wait_for_selector(".roster", timeout=5000)
+        check("roster links survive a reload",
+              "Bike Maintenance Log — Linked: 1995 Fat Boy Bobber" in
+              page.locator(".roster-card", has_text="1995 Fat Boy Bobber").inner_text()
+              and "Carb Tune Journal — Linked: 1995 Fat Boy Bobber" in
+              page.locator(".roster-card", has_text="1995 Fat Boy Bobber").inner_text()
+              and "Ignition Timing Helper — Linked: 1995 Fat Boy" in
+              page.locator(".roster-card", has_text="1995 Fat Boy Bobber").inner_text())
+        page.locator(".bike-card", has_text="1995 Fat Boy Bobber").click()
+        page.wait_for_selector("#detailWrap .hero-wrap", timeout=10000)
+        page.locator('[data-action="tab"][data-id="sheet"]').click()
+        page.wait_for_selector(".connected-apps", timeout=5000)
+
         # Removing one link leaves the others on the sheet.
         page.once("dialog", lambda d: d.accept())
         page.locator(".link-row", has_text="Bike Maintenance Log").locator('[data-action="link-remove"]').click()

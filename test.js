@@ -604,6 +604,228 @@ check('linked URLs are the live Pages sites', GBS.LINKED_APPS.every(function (a)
   return a.url.indexOf('https://joshuapopps.github.io/') === 0;
 }));
 
+/* --- Connected apps (Stage 2) — shared bike roster --- */
+/* A maintenance export where the Fat Boy was renamed over there —
+ * same bike id 'b1', different name — so only the roster key can
+ * find it. */
+var MAINT_EXPORT_RENAMED = JSON.stringify({
+  bikes: {
+    'b1': { name: 'Fatty Bobber 1995', year: 1995, make: 'Harley-Davidson', model: 'Fat Boy', odometer: 31000, odometer_date: '2026-11-10' },
+    'b2': { name: '1990 Softail', year: 1990, make: 'Harley-Davidson', model: 'Softail', odometer: 0, odometer_date: '' }
+  },
+  tasks: { 't1': { bike_id: 'b1', name: 'Oil change', every_miles: 5000, every_months: 12, notes: '' } },
+  entries: [
+    { bike_id: 'b1', task_id: 't1', date: '2026-11-10', odometer: 31000, cost: '52.00', notes: '' }
+  ]
+});
+/* Attach all three apps' exports to one bike, the way the app
+ * shell does it: build the summary, attach it with its key, and
+ * record the roster link. Returns the store and the bike. */
+function attachAllThree(st) {
+  var b = st.bikes[0];
+  var m = GBS.buildLinkedSummary('maintenance', MAINT_EXPORT, 'b1');
+  GBS.attachLinkedSummary(b, m, 'b1');
+  GBS.recordRosterLink(st, b, 'maintenance', 'b1');
+  var c = GBS.buildLinkedSummary('carb', CARB_EXPORT, 'b1');
+  GBS.attachLinkedSummary(b, c, 'b1');
+  GBS.recordRosterLink(st, b, 'carb', 'b1');
+  var t = GBS.buildLinkedSummary('timing', TIMING_EXPORT, '1995 Fat Boy');
+  GBS.attachLinkedSummary(b, t, '1995 Fat Boy');
+  GBS.recordRosterLink(st, b, 'timing', '1995 Fat Boy');
+  return { store: st, bike: b };
+}
+check('seed store has a roster, one entry per bike', (function () {
+  if (s.roster.length !== 3) return false;
+  return s.bikes.every(function (b) {
+    var e = GBS.rosterForBike(s, b);
+    return e && e.name === b.name && e.base === b.base &&
+      e.linked.maintenance === null && e.linked.carb === null && e.linked.timing === null;
+  });
+})());
+check('roster entries have distinct ids', (function () {
+  var ids = s.roster.map(function (e) { return e.id; });
+  return new Set(ids).size === 3;
+})());
+check('pre-roster store migrates without loss', (function () {
+  var st = JSON.parse(JSON.stringify(s));
+  delete st.roster;
+  st.bikes.forEach(function (b) { delete b.rosterId; });
+  var b = st.bikes[0];
+  GBS.attachLinkedSummary(b, JSON.parse(JSON.stringify(maintSummary)));
+  GBS.attachLinkedSummary(b, JSON.parse(JSON.stringify(carbSummary)));
+  GBS.attachLinkedSummary(b, JSON.parse(JSON.stringify(timingSummary)));
+  GBS.migrateStore(st);
+  try { GBS.validateStore(st); } catch (e) { return false; }
+  if (st.roster.length !== 3) return false;
+  var e = GBS.rosterForBike(st, b);
+  if (!e || b.rosterId !== e.id) return false;
+  /* Stage 1 summaries survive the trip, untouched. */
+  if (!b.links.maintenance || b.links.maintenance.tasksDone !== 2) return false;
+  if (!b.links.carb || b.links.carb.carbs[0].mainJet !== '0.076') return false;
+  if (!b.links.timing || b.links.timing.last.date !== '2026-10-30') return false;
+  /* Timing hands its key over (the key IS the name); the older
+   * maintenance/carb summaries recorded no key, so their links
+   * stay empty until that export attaches again. */
+  if (e.linked.timing !== '1995 Fat Boy') return false;
+  if (e.linked.maintenance !== null || e.linked.carb !== null) return false;
+  return true;
+})());
+check('migrate is idempotent', (function () {
+  var st = JSON.parse(JSON.stringify(s));
+  delete st.roster;
+  st.bikes.forEach(function (b) { delete b.rosterId; });
+  GBS.migrateStore(st);
+  var first = JSON.stringify(st.roster);
+  GBS.migrateStore(st);
+  return JSON.stringify(st.roster) === first && st.roster.length === 3;
+})());
+check('attach records the source key on the summary', (function () {
+  var b = JSON.parse(JSON.stringify(fat));
+  GBS.attachLinkedSummary(b, JSON.parse(JSON.stringify(maintSummary)), 'b1');
+  return b.links.maintenance.sourceKey === 'b1';
+})());
+check('same bike, all three apps, one roster entry', (function () {
+  var st = JSON.parse(JSON.stringify(s));
+  var r = attachAllThree(st);
+  var e = GBS.rosterForBike(st, r.bike);
+  if (!e) return false;
+  if (e.linked.maintenance !== 'b1' || e.linked.carb !== 'b1' || e.linked.timing !== '1995 Fat Boy') return false;
+  var status = GBS.rosterLinkStatus(st, r.bike);
+  return status.length === 3 && status.every(function (x) { return x.linked && x.sourceBike; }) &&
+    status[0].sourceBike === '1995 Fat Boy Bobber' && status[2].sourceBike === '1995 Fat Boy';
+})());
+check('roster identity is stable when the sibling renames the bike', (function () {
+  var st = JSON.parse(JSON.stringify(s));
+  var r = attachAllThree(st);
+  var parsed = GBS.parseLinkedExport('maintenance', MAINT_EXPORT_RENAMED);
+  /* Name matching alone would find nothing here — the renamed
+   * bike shares no substring with '1995 Fat Boy Bobber'. */
+  var byName = GBS.matchLinkedCandidate(r.bike, parsed.candidates);
+  if (!byName.ambiguous) return false;
+  var res = GBS.resolveLinkedCandidate(st, r.bike, 'maintenance', parsed);
+  return !res.ambiguous && res.matched && res.matched.key === 'b1' && res.via === 'roster';
+})());
+check('roster key missing from the file asks instead of guessing', (function () {
+  var st = JSON.parse(JSON.stringify(s));
+  var b = st.bikes[0];
+  GBS.recordRosterLink(st, b, 'maintenance', 'bX');
+  var parsed = GBS.parseLinkedExport('maintenance', MAINT_EXPORT);
+  var res = GBS.resolveLinkedCandidate(st, b, 'maintenance', parsed);
+  return res.ambiguous && res.matched === null && res.rosterMiss === true;
+})());
+check('resolve falls back to the name match with no roster link', (function () {
+  var st = JSON.parse(JSON.stringify(s));
+  var b = st.bikes[0];
+  var parsed = GBS.parseLinkedExport('maintenance', MAINT_EXPORT);
+  var res = GBS.resolveLinkedCandidate(st, b, 'maintenance', parsed);
+  return !res.ambiguous && res.matched.key === 'b1' && res.via === 'name';
+})());
+check('resolve asks on two name matches, as Stage 1 did', (function () {
+  var st = JSON.parse(JSON.stringify(s));
+  var b = st.bikes[0];
+  /* Both names match the Fat Boy, so the name match cannot decide. */
+  var ambiguousTiming = JSON.stringify({
+    version: 1,
+    entries: [
+      { bike: '1995 Fat Boy', date: '2026-10-30', ignition: 'dyna-2000i', method: 'static', curve: 2, result: 'Timed 20° BTDC', notes: '' },
+      { bike: '1995 Fat Boy Bobber', date: '2026-08-01', ignition: 'stock', method: 'check', curve: null, result: 'Checked at TDC', notes: '' }
+    ]
+  });
+  var parsed = GBS.parseLinkedExport('timing', ambiguousTiming);
+  var res = GBS.resolveLinkedCandidate(st, b, 'timing', parsed);
+  return res.ambiguous && res.matched === null && res.rosterMiss === false;
+})());
+check('old name-based attaches still work', (function () {
+  var st = JSON.parse(JSON.stringify(s));
+  var b = st.bikes[0];
+  var parsed = GBS.parseLinkedExport('carb', CARB_EXPORT);
+  var res = GBS.resolveLinkedCandidate(st, b, 'carb', parsed);
+  if (res.ambiguous || !res.matched) return false;
+  var sum = GBS.buildLinkedSummary('carb', CARB_EXPORT, res.matched.key);
+  GBS.attachLinkedSummary(b, sum, res.matched.key);
+  return b.links.carb.carbs[0].mainJet === '0.076';
+})());
+check('unlink drops one app and keeps the others', (function () {
+  var st = JSON.parse(JSON.stringify(s));
+  var r = attachAllThree(st);
+  GBS.unlinkRosterIdentity(st, r.bike, 'maintenance');
+  var e = GBS.rosterForBike(st, r.bike);
+  return !r.bike.links.maintenance && e.linked.maintenance === null &&
+    !!r.bike.links.carb && !!r.bike.links.timing &&
+    e.linked.carb === 'b1' && e.linked.timing === '1995 Fat Boy';
+})());
+throws('unlink rejects an unknown app', function () {
+  var st = JSON.parse(JSON.stringify(s));
+  GBS.unlinkRosterIdentity(st, st.bikes[0], 'dyno');
+});
+throws('recordRosterLink rejects a blank key', function () {
+  var st = JSON.parse(JSON.stringify(s));
+  GBS.recordRosterLink(st, st.bikes[0], 'maintenance', '  ');
+});
+throws('recordRosterLink rejects an unknown app', function () {
+  var st = JSON.parse(JSON.stringify(s));
+  GBS.recordRosterLink(st, st.bikes[0], 'dyno', 'b1');
+});
+check('roster survives the export/import round-trip', (function () {
+  var st = JSON.parse(JSON.stringify(s));
+  attachAllThree(st);
+  var back = GBS.validateImport(GBS.exportJSON(st, {}));
+  var b = back.store.bikes[0];
+  var e = GBS.rosterForBike(back.store, b);
+  return !!e && e.linked.maintenance === 'b1' && e.linked.carb === 'b1' &&
+    e.linked.timing === '1995 Fat Boy' && back.store.roster.length === 3 &&
+    b.links.maintenance.tasksDone === 2 && b.links.timing.last.date === '2026-10-30';
+})());
+check('merge carries the roster and its links', (function () {
+  var st = JSON.parse(JSON.stringify(s));
+  attachAllThree(st);
+  var merged = GBS.mergeImport(GBS.emptyStore(), st);
+  try { GBS.validateStore(merged.store); } catch (e) { return false; }
+  if (merged.store.roster.length !== 3) return false;
+  var b = merged.store.bikes[0];
+  var e = GBS.rosterForBike(merged.store, b);
+  return !!e && e.linked.maintenance === 'b1' && e.linked.carb === 'b1' &&
+    e.linked.timing === '1995 Fat Boy' && b.links.maintenance.tasksDone === 2;
+})());
+check('merge of a pre-roster file still gives every bike a roster entry', (function () {
+  var st = JSON.parse(JSON.stringify(s));
+  delete st.roster;
+  st.bikes.forEach(function (b) { delete b.rosterId; });
+  var merged = GBS.mergeImport(GBS.emptyStore(), st);
+  try { GBS.validateStore(merged.store); } catch (e) { return false; }
+  return merged.store.roster.length === 3 &&
+    merged.store.bikes.every(function (b) { return !!GBS.rosterForBike(merged.store, b); });
+})());
+check('pruneRoster drops a deleted bike\'s entry', (function () {
+  var st = JSON.parse(JSON.stringify(s));
+  st.bikes = st.bikes.slice(0, 2);
+  GBS.pruneRoster(st);
+  return st.roster.length === 2;
+})());
+check('roster link status carries no money for a hidden bike', (function () {
+  var st = JSON.parse(JSON.stringify(s));
+  var r = attachAllThree(st);
+  r.bike.hideMoney = true;
+  var status = GBS.rosterLinkStatus(st, r.bike);
+  return !/\$\s?\d/.test(JSON.stringify(status)) &&
+    status.every(function (x) { return x.linked && x.sourceBike; });
+})());
+throws('validateStore rejects a bike pointing at a missing roster entry', function () {
+  var st = JSON.parse(JSON.stringify(s));
+  st.bikes[0].rosterId = 'roster-nope';
+  GBS.validateStore(st);
+});
+throws('validateStore rejects duplicate roster ids', function () {
+  var st = JSON.parse(JSON.stringify(s));
+  st.roster.push(JSON.parse(JSON.stringify(st.roster[0])));
+  GBS.validateStore(st);
+});
+throws('validateStore rejects a roster link to an unknown app', function () {
+  var st = JSON.parse(JSON.stringify(s));
+  st.roster[0].linked.dyno = 'b1';
+  GBS.validateStore(st);
+});
+
 /* --- Sell handoff — QR + claim code --- */
 var handoffPkg = GBS.createHandoff(s, fat.id, {});
 check('newClaimCode is 6 chars from the claim alphabet', (function () {

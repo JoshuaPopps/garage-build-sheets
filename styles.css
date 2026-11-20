@@ -623,6 +623,13 @@ td.num, th.num { text-align: right; }
 .link-row p { margin: 4px 0; }
 .linked-status { font-weight: 700; color: var(--green, #2e7d32); }
 .link-picker { border: 2px solid var(--purple, #9d6bff); margin-top: 10px; }
+.roster { margin-top: 24px; }
+.roster h3 { font-size: 1.3rem; margin: 0 0 4px; }
+.roster-card { margin-bottom: 10px; }
+.roster-card h4 { margin: 0 0 2px; }
+.roster-card p { margin: 4px 0; }
+.roster-apps { list-style: none; margin: 8px 0 0; padding: 0; }
+.roster-apps li { margin: 6px 0; }
 .import-choice { border: 2px solid var(--purple, #9d6bff); margin-top: 10px; }
 .import-choice button { margin: 2px 4px 2px 0; }
 
