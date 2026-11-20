@@ -403,7 +403,15 @@ function renderGarage() {
   var empty = document.getElementById('garageEmpty');
   empty.hidden = store.bikes.length > 0;
   var rosterWrap = document.getElementById('rosterWrap');
-  if (!store.bikes.length) { grid.innerHTML = ''; if (rosterWrap) rosterWrap.innerHTML = ''; return; }
+  if (!store.bikes.length) {
+    grid.innerHTML = '';
+    if (rosterWrap) rosterWrap.innerHTML = '';
+    /* An empty garage still has to render the bike form — otherwise
+     * tapping "+ Add a bike" after clearing the examples does nothing,
+     * because this early return used to skip the bikeFormWrap write. */
+    document.getElementById('bikeFormWrap').innerHTML = ui.showBikeForm ? bikeFormHTML(null) : '';
+    return;
+  }
   grid.innerHTML = store.bikes.map(function (b) {
     var mods = GBS.modsFor(store, b.id);
     var photos = GBS.photosFor(store, b.id);

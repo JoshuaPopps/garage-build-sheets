@@ -1,7 +1,7 @@
 /* Garage Build Sheets — service worker.
  * Cache-first for the app shell so the garage works offline in the
  * shop. Version lives in the cache name; bump it on every release. */
-var CACHE_NAME = 'garage-build-sheets-v7';
+var CACHE_NAME = 'garage-build-sheets-v8';
 var ASSETS = [
   './',
   './index.html',
@@ -9,8 +9,7 @@ var ASSETS = [
   './store.js',
   './app.js',
   './manifest.webmanifest',
-  './icons/icon.svg',
-  './icons/icon-192.png',
+    './icons/icon-192.png',
   './icons/icon-512.png'
 ];
 self.addEventListener('install', function (event) {
