@@ -23,8 +23,8 @@
 /* Constants                                                           */
 /* ------------------------------------------------------------------ */
 
-var APP_VERSION = '1.0.3';
-var CACHE_NAME = 'garage-build-sheets-v4';
+var APP_VERSION = '1.0.4';
+var CACHE_NAME = 'garage-build-sheets-v5';
 
 var STYLES = [
   { id: 'treatment1990', name: '1990 Treatment',
@@ -1511,6 +1511,109 @@ function validateImport(raw) {
   return { store: data, photoData: photoData };
 }
 
+/* Merge an imported store INTO the existing garage instead of
+ * replacing it. Returns { store, added, renamed, photoIdMap,
+ * addedBikeIds }.
+ *
+ * - Every incoming bike is added alongside the garage's own bikes;
+ *   nothing already in the garage is removed or overwritten.
+ * - Every incoming record gets a FRESH id (bike, mod, photo, note,
+ *   issue) and every cross-reference is remapped — heroPhotoId,
+ *   receiptPhotoId, issue photoId / fixModId — so an import of a
+ *   file exported from this same garage can never collide with the
+ *   records already here. photoIdMap maps each incoming photo id
+ *   to its new id, so the app shell can save the photo blobs under
+ *   the right keys.
+ * - Name conflicts keep BOTH bikes: the imported one is renamed
+ *   "Name (imported)" ("Name (imported 2)", " (imported 3)" … when
+ *   the file itself brings two of a name) and flagged imported so
+ *   the garage and the sheet can badge it. The original bike's
+ *   name is never touched.
+ * - The imported bikes arrive with their mods, photos, notes,
+ *   issues, linked summaries, and hideMoney flag intact — merge
+ *   only re-keys and re-labels, it never edits a build's content.
+ * - The existing selection stands; an empty garage selects the
+ *   first imported bike.
+ * Neither input store is mutated. */
+function mergeImport(existing, incoming) {
+  if (!existing || typeof existing !== 'object') throw new Error('mergeImport needs the current garage.');
+  if (!incoming || typeof incoming !== 'object') throw new Error('mergeImport needs the imported garage.');
+  validateStore(existing);
+  validateStore(incoming);
+  var merged = JSON.parse(JSON.stringify(existing));
+  var takenNames = {};
+  merged.bikes.forEach(function (b) { takenNames[normalizeName(b.name)] = true; });
+  var bikeIdMap = {}, photoIdMap = {}, modIdMap = {};
+  var renamed = [], addedBikeIds = [];
+  incoming.bikes.forEach(function (ib) {
+    var bike = JSON.parse(JSON.stringify(ib));
+    var oldId = bike.id;
+    bike.id = newId('bike');
+    bikeIdMap[oldId] = bike.id;
+    /* Name conflict: keep both, label the imported one. */
+    var baseName = String(bike.name || 'Imported bike');
+    var name = baseName, suffix = 0;
+    while (takenNames[normalizeName(name)]) {
+      suffix++;
+      name = baseName + ' (imported' + (suffix > 1 ? ' ' + suffix : '') + ')';
+    }
+    if (name !== baseName) renamed.push({ from: baseName, to: name });
+    takenNames[normalizeName(name)] = true;
+    bike.name = name;
+    bike.imported = true;
+    merged.bikes.push(bike);
+    addedBikeIds.push(bike.id);
+  });
+  /* Photos first: mods and issues point at them. */
+  incoming.photos.forEach(function (ip) {
+    var p = JSON.parse(JSON.stringify(ip));
+    photoIdMap[p.id] = newId('photo');
+    p.id = photoIdMap[ip.id];
+    p.bikeId = bikeIdMap[p.bikeId] || p.bikeId;
+    merged.photos.push(p);
+  });
+  incoming.mods.forEach(function (im) {
+    var m = JSON.parse(JSON.stringify(im));
+    modIdMap[m.id] = newId('mod');
+    m.id = modIdMap[im.id];
+    m.bikeId = bikeIdMap[m.bikeId] || m.bikeId;
+    if (m.receiptPhotoId && photoIdMap[m.receiptPhotoId]) m.receiptPhotoId = photoIdMap[m.receiptPhotoId];
+    merged.mods.push(m);
+  });
+  incoming.notes.forEach(function (ino) {
+    var n = JSON.parse(JSON.stringify(ino));
+    n.id = newId('note');
+    n.bikeId = bikeIdMap[n.bikeId] || n.bikeId;
+    merged.notes.push(n);
+  });
+  incoming.issues.forEach(function (ii) {
+    var is = JSON.parse(JSON.stringify(ii));
+    is.id = newId('issue');
+    is.bikeId = bikeIdMap[is.bikeId] || is.bikeId;
+    if (is.photoId && photoIdMap[is.photoId]) is.photoId = photoIdMap[is.photoId];
+    if (is.fixModId && modIdMap[is.fixModId]) is.fixModId = modIdMap[is.fixModId];
+    merged.issues.push(is);
+  });
+  /* Hero photos were remapped above; point each ADDED bike at its
+   * own (new) hero photo id. Existing bikes are never touched —
+   * an import of this garage's own export shares photo ids with
+   * the garage, and re-pointing an existing hero at the imported
+   * copy would tie it to a record the user may delete. */
+  merged.bikes.forEach(function (b) {
+    if (addedBikeIds.indexOf(b.id) === -1) return;
+    if (b.heroPhotoId && photoIdMap[b.heroPhotoId]) b.heroPhotoId = photoIdMap[b.heroPhotoId];
+  });
+  if (!merged.selectedBikeId && merged.bikes.length) merged.selectedBikeId = merged.bikes[0].id;
+  validateStore(merged);
+  return {
+    store: merged,
+    added: incoming.bikes.length,
+    renamed: renamed,
+    photoIdMap: photoIdMap,
+    addedBikeIds: addedBikeIds
+  };
+}
+
 /* ------------------------------------------------------------------ */
 /* Seed data — three EXAMPLE bikes, clearly labelled, deletable.      */
 /* Example prices only. No real personal data.                         */
@@ -1704,7 +1807,7 @@ var GBS_API = {
   renderSheet: renderSheet, sheetFoot: sheetFoot, sheetText: sheetText,
   shareText: shareText, shareCardModel: shareCardModel,
   qrEncode: qrEncode, qrToSvg: qrToSvg, qrPayload: qrPayload, qrByteCapacity: qrByteCapacity,
-  exportJSON: exportJSON, validateImport: validateImport,
+  exportJSON: exportJSON, validateImport: validateImport, mergeImport: mergeImport,
   LINKED_APPS: LINKED_APPS, linkedAppById: linkedAppById,
   normalizeName: normalizeName, namesMatch: namesMatch,
   matchLinkedCandidate: matchLinkedCandidate,

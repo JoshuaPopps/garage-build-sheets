@@ -225,6 +225,7 @@ td.num, th.num { text-align: right; }
   vertical-align: middle;
 }
 .badge.example { background: var(--accent-dim); color: var(--accent-bright); border-color: var(--accent); }
+.badge.imported { background: var(--accent-dim); color: var(--accent-bright); border-color: var(--accent); }
 .badge.money-hidden { background: rgba(229, 72, 60, .14); color: var(--signal); border-color: var(--signal); }
 .note {
   background: var(--panel);
@@ -622,6 +623,8 @@ td.num, th.num { text-align: right; }
 .link-row p { margin: 4px 0; }
 .linked-status { font-weight: 700; color: var(--green, #2e7d32); }
 .link-picker { border: 2px solid var(--purple, #9d6bff); margin-top: 10px; }
+.import-choice { border: 2px solid var(--purple, #9d6bff); margin-top: 10px; }
+.import-choice button { margin: 2px 4px 2px 0; }
 /* Linked block inside the styled sheet — one shared helper renders
  * it in all six styles, so it stays readable on every paper. */
 .sheet .linked-notes { margin: 6px 0 0; padding-left: 18px; }

@@ -496,6 +496,110 @@ def main():
               "Carb Tune Journal" in page.locator(".sheet .linked-notes").inner_text()
               and "Ignition Timing Helper" in page.locator(".sheet .linked-notes").inner_text())
 
+        print("== import merge ==")
+        # One-bike import file: the Fat Boy exactly as exported — same
+        # ids, same name — so the merge has to re-key the records and
+        # label the name clash instead of overwriting anything.
+        import_path = "/tmp/gbs-import-fatboy.json"
+        with open("/tmp/gbs-export-test.json") as f:
+            exp = json.load(f)
+        fat_id = [b for b in exp["bikes"] if b["name"] == "1995 Fat Boy Bobber"][0]["id"]
+        one = {
+            "version": 1,
+            "bikes": [b for b in exp["bikes"] if b["id"] == fat_id],
+            "mods": [m for m in exp["mods"] if m["bikeId"] == fat_id],
+            "photos": [p for p in exp["photos"] if p["bikeId"] == fat_id],
+            "notes": [n for n in exp["notes"] if n["bikeId"] == fat_id],
+            "issues": [i for i in exp["issues"] if i["bikeId"] == fat_id],
+            "selectedBikeId": fat_id,
+        }
+        with open(import_path, "w") as f:
+            json.dump(one, f)
+
+        page.click('[data-nav="data"]')
+        page.set_input_files("#importFile", import_path)
+        page.wait_for_selector("#importChoice", state="visible", timeout=5000)
+        choice_text = page.locator("#importChoice").inner_text()
+        check("import asks merge or replace first",
+              "Merge" in choice_text and "Replace" in choice_text)
+        check("choice names the file's bike",
+              "1995 Fat Boy Bobber" in choice_text)
+        page.click("#importMergeBtn")
+        # Wait on the toast's own text, not just visibility — the
+        # "Link removed." toast from the section above may still be
+        # showing when the merge lands.
+        page.wait_for_function(
+            "() => document.getElementById('toastMsg') && "
+            "document.getElementById('toastMsg').innerText.includes('Merged')", timeout=10000)
+        check("merge toast says what happened",
+              "Merged 1 bike" in page.locator("#toast").inner_text())
+        check("merge adds the bike without removing the garage",
+              page.locator(".bike-card").count() == 5)
+        check("name conflict keeps both bikes",
+              page.locator(".bike-card", has_text="1995 Fat Boy Bobber").count() == 2)
+        check("imported copy is labelled (imported)",
+              page.locator(".bike-card", has_text="1995 Fat Boy Bobber (imported)").count() == 1
+              and page.locator(".bike-card .badge.imported").count() == 1)
+        check("merge toast names the rename",
+              "(imported)" in page.locator("#toast").inner_text())
+        # Undo puts the pre-import garage back.
+        page.click("#toastUndo")
+        page.wait_for_function(
+            "() => document.querySelectorAll('.bike-card').length === 4", timeout=10000)
+        check("undo restores the pre-import garage",
+              page.locator(".bike-card").count() == 4
+              and page.locator(".bike-card", has_text="(imported)").count() == 0)
+
+        # Merge again, for real this time, and check what came along.
+        page.set_input_files("#importFile", import_path)
+        page.wait_for_selector("#importChoice", state="visible", timeout=5000)
+        page.click("#importMergeBtn")
+        # Wait on the garage itself, not the toast text — the toast
+        # still carries the first merge's "Merged …" line while it is
+        # hidden, so a text wait would return on the stale message.
+        page.wait_for_function(
+            "() => document.querySelectorAll('.bike-card').length === 5", timeout=10000)
+        check("second merge adds the bike again",
+              page.locator(".bike-card").count() == 5)
+        page.click('[data-nav="garage"]')
+        page.locator(".bike-card", has_text="1995 Fat Boy Bobber (imported)").click()
+        page.wait_for_selector("#detailWrap .hero-wrap", timeout=10000)
+        hero_src = page.locator("#heroImg").get_attribute("src")
+        check("merged bike's hero photo survived as a stored blob",
+              (hero_src or "").startswith("blob:"))
+        check("merged bike shows the Imported badge on its sheet",
+              page.locator("#detailWrap .badge.imported").count() == 1)
+        page.locator('[data-action="tab"][data-id="mods"]').click()
+        check("merged bike's mods came along",
+              page.locator(".mod-card").count() == 8)
+        page.locator('[data-action="tab"][data-id="photos"]').click()
+        check("merged bike's photos came along",
+              "Example photo — Fat Boy on the bench" in page.locator("#detailWrap").inner_text())
+        page.locator('[data-action="tab"][data-id="notes"]').click()
+        check("merged bike's notes came along",
+              "Enrichener-only start" in page.locator(".timeline").inner_text())
+
+        print("== import replace ==")
+        page.click('[data-nav="data"]')
+        page.set_input_files("#importFile", import_path)
+        page.wait_for_selector("#importChoice", state="visible", timeout=5000)
+        page.once("dialog", lambda d: d.accept())
+        page.click("#importReplaceBtn")
+        page.wait_for_function(
+            "() => document.getElementById('toastMsg') && "
+            "document.getElementById('toastMsg').innerText.includes('Garage replaced')", timeout=10000)
+        check("replace swaps the garage for the file",
+              page.locator(".bike-card").count() == 1)
+        check("replaced garage holds the imported bike",
+              "1995 Fat Boy Bobber" in page.locator(".bike-card").first.inner_text())
+        check("replace shows an undo toast", page.locator("#toast").is_visible())
+        page.click("#toastUndo")
+        page.wait_for_function(
+            "() => document.querySelectorAll('.bike-card').length === 5", timeout=10000)
+        check("undo restores the pre-replace garage",
+              page.locator(".bike-card").count() == 5
+              and page.locator(".bike-card", has_text="1995 Fat Boy Bobber (imported)").count() == 1)
+
         print("== empty garage (fresh profile) ==")
         ctx2 = browser.new_context(viewport={"width": 390, "height": 844})
         page2 = ctx2.new_page()

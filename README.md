@@ -1,6 +1,6 @@
 # Garage Build Sheets
 
-**Version 1.0.3** — a living build sheet for every bike in your garage. Add
+**Version 1.0.4** — a living build sheet for every bike in your garage. Add
 your bikes, list the modifications, upload your own photos (not stock
 photos), and get a stylized build sheet you can update over time and keep
 notes on. Built for the garage: phone-first, offline, no account, no server,
@@ -71,9 +71,15 @@ ignition-timing-helper).
   editable short text rundown. Then your phone's native share sheet, copy
   to clipboard, or download — you pick where it goes.
 - **Data** — export the whole garage as JSON with photos included, import
-  it back (import replaces the garage — confirm first), download one bike
-  as JSON or as a printable text sheet, restore or delete the example
-  bikes, or reset everything.
+  it back, download one bike as JSON or as a printable text sheet,
+  restore or delete the example bikes, or reset everything. Importing
+  asks first: **Merge** adds the file's bikes alongside this garage —
+  a bike with the same name as one you already have is kept as a
+  separate build, labelled "(imported)" and badged Imported, so the two
+  can never be confused — or **Replace** wipes this garage and uses
+  only the file's bikes. Either way you get 12 seconds to undo it, and
+  the imported bikes arrive with their parts, photos, notes, and issues
+  intact (including their hide-money setting).
 
 ## The six sheet styles
 
@@ -123,8 +129,6 @@ empty state instead of a blank screen.
 
 ## Known limits
 
-- Import replaces the whole garage — there is no merge yet. Export first
-  if the garage holds anything you care about.
 - The QR carries a summary, not the full sheet. The full sheet (with
   photos) travels in the JSON export.
 - The share card draws the hero photo from the on-device photo; if a bike
@@ -142,6 +146,6 @@ empty state instead of a blank screen.
 - `app.js` — browser shell: IndexedDB, photo downscale, rendering,
   forms, share-card drawing, downloads.
 - `styles.css` — 1990 Treatment base plus all six sheet styles.
-- `sw.js` — cache-first service worker (`garage-build-sheets-v4`).
+- `sw.js` — cache-first service worker (`garage-build-sheets-v5`).
 - `manifest.webmanifest`, `icons/` — PWA install files.
 - `test.js`, `test_ui.py` — see TESTING.md.

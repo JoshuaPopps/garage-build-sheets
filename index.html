@@ -59,7 +59,15 @@
       <button id="exportBtn" type="button">Export garage (.json)</button>
       <button id="importBtn" type="button" class="secondary">Import garage (.json)</button>
       <input id="importFile" type="file" accept=".json,application/json" hidden>
-      <p class="muted">Importing <strong>replaces</strong> the garage on this device. Export first if you want a safety copy.</p>
+      <p class="muted">Importing asks first: <strong>Merge</strong> adds the file&rsquo;s bikes alongside this garage (same-name bikes are kept as separate builds, labelled &ldquo;imported&rdquo;), or <strong>Replace</strong> wipes this garage and uses only the file&rsquo;s bikes. Export first if you want a safety copy — either way, you get 12 seconds to undo it.</p>
+      <div class="card import-choice" id="importChoice" hidden>
+        <h3>Import this file?</h3>
+        <p id="importChoiceText"></p>
+        <p class="muted" id="importChoiceNames"></p>
+        <button id="importMergeBtn" type="button">Merge — add alongside my garage</button>
+        <button id="importReplaceBtn" type="button" class="danger">Replace — wipe my garage</button>
+        <button id="importCancelBtn" type="button" class="secondary">Cancel</button>
+      </div>
     </div>
     <div class="card">
       <h3>Example bikes</h3>
@@ -74,7 +82,7 @@
     </div>
     <div class="card">
       <h3>About</h3>
-      <p id="aboutText">Garage Build Sheets — Version 1.0.3. Plain JavaScript, no dependencies, works offline. Photos stay on this device; nothing is uploaded anywhere. Sharing is opt-in only: nothing posts itself.</p>
+      <p id="aboutText">Garage Build Sheets — Version 1.0.4. Plain JavaScript, no dependencies, works offline. Photos stay on this device; nothing is uploaded anywhere. Sharing is opt-in only: nothing posts itself.</p>
       <p class="muted">Prices in the example bikes are example prices only. Specs on the sheets are what you type in &mdash; the app never invents a torque, clearance, or factory number.</p>
     </div>
   </section>

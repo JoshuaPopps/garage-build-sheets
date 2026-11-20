@@ -165,6 +165,7 @@ var ui = {
   editingBikeId: null, editingModId: null, editingIssueId: null, editingNoteId: null,
   editingPhotoId: null,
   linkPicker: null,
+  importPending: null,
   showBikeForm: false, showModForm: false, showNoteForm: false, showIssueForm: false, showPhotoForm: false
 };
 var toastTimer = null;
@@ -323,6 +324,9 @@ function bindStatic() {
     if (f) doImport(f);
     ev.target.value = '';
   });
+  document.getElementById('importMergeBtn').addEventListener('click', applyImportMerge);
+  document.getElementById('importReplaceBtn').addEventListener('click', applyImportReplace);
+  document.getElementById('importCancelBtn').addEventListener('click', function () { hideImportChoice(); render(); });
   document.getElementById('restoreExamplesBtn').addEventListener('click', restoreExamples);
   document.getElementById('deleteExamplesBtn').addEventListener('click', function () { deleteExamples(false); });
   document.getElementById('resetBtn').addEventListener('click', resetAll);
@@ -364,7 +368,14 @@ function render() {
     return Promise.resolve();
   }
   var ctx = bikeCtx(bike);
-  return ensurePhotoUrls(ctx.photos).then(function () {
+  /* All of the garage's photos, not just the selected bike's —
+   * the grid needs every bike's hero URL, and a merged import's
+   * photos are blobs that only resolve through this cache. */
+  return ensurePhotoUrls(store.photos).then(function () {
+    /* Blob URLs land in the cache above — re-render the garage too,
+     * or cards whose photos are stored blobs (uploads, merged
+     * imports) would sit imageless until the next render. */
+    renderGarage();
     ctx = bikeCtx(bike);
     detail.innerHTML = detailHTML(bike, ctx);
   });
@@ -387,6 +398,7 @@ function renderGarage() {
       '<span class="bike-card-body">' +
       '<h3>' + esc(b.name) +
       (b.isExample ? ' <span class="badge example">Example</span>' : '') +
+      (b.imported ? ' <span class="badge imported">Imported</span>' : '') +
       (b.hideMoney ? ' <span class="badge money-hidden">Money hidden</span>' : '') + '</h3>' +
       '<p class="base">' + esc(b.base) + ' &middot; ' + esc(b.direction) + '</p>' +
       '<span class="badge">' + esc(GBS.styleById(b.styleId).name) + '</span> ' +
@@ -432,6 +444,7 @@ function detailHTML(bike, ctx) {
   h += '<button type="button" class="danger small" data-action="delete-bike" data-id="' + esc(bike.id) + '">Delete this bike</button>';
   h += '<h2>' + esc(bike.name) +
     (bike.isExample ? ' <span class="badge example">Example</span>' : '') +
+    (bike.imported ? ' <span class="badge imported">Imported</span>' : '') +
     (bike.hideMoney ? ' <span class="badge money-hidden">Money hidden</span>' : '') + '</h2>';
   h += '<p class="muted">' + esc(bike.base) + ' &middot; ' + esc(bike.direction) + ' &middot; ' + esc(bike.status || '') + '</p>';
   /* Hero + tags */
@@ -1704,24 +1717,92 @@ function doImport(file) {
     var result;
     try { result = GBS.validateImport(String(reader.result)); }
     catch (e) { showToast('That file could not be imported: ' + e.message); return; }
+    /* The choice is the confirm: Merge adds the file's bikes
+     * alongside this garage, Replace wipes this garage for the
+     * file. Nothing is applied until the user picks one. */
+    ui.importPending = { result: result, fileName: file.name };
     var incoming = result.store;
-    if (!window.confirm('Replace the garage on this device (' + store.bikes.length + ' bike' + (store.bikes.length === 1 ? '' : 's') + ') with the imported file (' + incoming.bikes.length + ' bike' + (incoming.bikes.length === 1 ? '' : 's') + ')? Export first if you want a safety copy.')) return;
-    var jobs = Object.keys(result.photoData).map(function (pid) {
-      return fetch(result.photoData[pid]).then(function (r) { return r.blob(); })
-        .then(function (blob) { return photoBlobPut(pid, blob); });
-    });
-    Promise.all(jobs).then(function () {
-      incoming._firstRun = false;
-      store = incoming;
-      if (!store.selectedBikeId && store.bikes.length) store.selectedBikeId = store.bikes[0].id;
-      ui.sharePrepared = false; ui.tagMode = false; ui.tagPopoverModId = null;
-      return persist();
-    }).then(render).then(function () {
-      showToast('Garage imported — ' + incoming.bikes.length + ' bike' + (incoming.bikes.length === 1 ? '' : 's') + '.');
-    }).catch(function (e) { showToast('Import failed while saving photos: ' + e.message); });
+    document.getElementById('importChoiceText').textContent =
+      'This file holds ' + incoming.bikes.length + ' bike' + (incoming.bikes.length === 1 ? '' : 's') +
+      ' — ' + incoming.bikes.map(function (b) { return b.name; }).join(', ') + '. ' +
+      'Your garage has ' + store.bikes.length + ' bike' + (store.bikes.length === 1 ? '' : 's') + '.';
+    document.getElementById('importChoiceNames').textContent =
+      'Merge adds the file\u2019s bikes next to yours — a bike with the same name as one you already have is kept as a separate build, labelled \u201c(imported)\u201d. Replace wipes this garage and uses only the file\u2019s bikes. Export first if you want a safety copy.';
+    document.getElementById('importChoice').hidden = false;
+    document.getElementById('importChoice').scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
   reader.onerror = function () { showToast('Could not read that file.'); };
   reader.readAsText(file);
+}
+function hideImportChoice() {
+  ui.importPending = null;
+  document.getElementById('importChoice').hidden = true;
+}
+/* Save an import's photo blobs under their (possibly remapped) ids. */
+function saveImportPhotos(photoData, idMap) {
+  var jobs = Object.keys(photoData || {}).map(function (pid) {
+    var finalId = (idMap && idMap[pid]) || pid;
+    return fetch(photoData[pid]).then(function (r) { return r.blob(); })
+      .then(function (blob) { return photoBlobPut(finalId, blob); });
+  });
+  return Promise.all(jobs);
+}
+/* Undo an import: put the pre-import garage back and drop the
+ * blobs the import added, so nothing it brought in is left
+ * orphaned behind. */
+function undoImport(before, addedBlobIds) {
+  store = before;
+  (addedBlobIds || []).forEach(function (id) {
+    var stillUsed = store.photos.some(function (p) { return p.id === id; }) ||
+      store.mods.some(function (m) { return m.receiptPhotoId === id; }) ||
+      store.issues.some(function (i) { return i.photoId === id; });
+    if (!stillUsed) { forgetPhotoUrl(id); photoBlobDelete(id).catch(function () {}); }
+  });
+  ui.sharePrepared = false; ui.tagMode = false; ui.tagPopoverModId = null;
+  persist().then(render);
+}
+function applyImportMerge() {
+  var pending = ui.importPending;
+  if (!pending) return;
+  hideImportChoice();
+  var before = JSON.parse(JSON.stringify(store));
+  var merged;
+  try { merged = GBS.mergeImport(store, pending.result.store); }
+  catch (e) { showToast('That file could not be merged: ' + e.message); return; }
+  var addedBlobIds = Object.keys(pending.result.photoData || {}).map(function (pid) {
+    return (merged.photoIdMap && merged.photoIdMap[pid]) || pid;
+  });
+  saveImportPhotos(pending.result.photoData, merged.photoIdMap).then(function () {
+    merged.store._firstRun = false;
+    store = merged.store;
+    ui.sharePrepared = false; ui.tagMode = false; ui.tagPopoverModId = null;
+    return persist();
+  }).then(render).then(function () {
+    var msg = 'Merged ' + merged.added + ' bike' + (merged.added === 1 ? '' : 's') + ' into your garage.';
+    if (merged.renamed.length) {
+      msg += ' ' + merged.renamed.map(function (r) { return '\u201c' + r.from + '\u201d came in as \u201c' + r.to + '\u201d'; }).join('; ') + ' — both kept.';
+    }
+    showToast(msg, 'Undo', function () { undoImport(before, addedBlobIds); });
+  }).catch(function (e) { showToast('Import failed while saving photos: ' + e.message); });
+}
+function applyImportReplace() {
+  var pending = ui.importPending;
+  if (!pending) return;
+  var incoming = pending.result.store;
+  if (!window.confirm('Replace the garage on this device (' + store.bikes.length + ' bike' + (store.bikes.length === 1 ? '' : 's') + ') with the imported file (' + incoming.bikes.length + ' bike' + (incoming.bikes.length === 1 ? '' : 's') + ')? Export first if you want a safety copy.')) return;
+  hideImportChoice();
+  var before = JSON.parse(JSON.stringify(store));
+  var addedBlobIds = Object.keys(pending.result.photoData || {});
+  saveImportPhotos(pending.result.photoData, null).then(function () {
+    incoming._firstRun = false;
+    store = incoming;
+    if (!store.selectedBikeId && store.bikes.length) store.selectedBikeId = store.bikes[0].id;
+    ui.sharePrepared = false; ui.tagMode = false; ui.tagPopoverModId = null;
+    return persist();
+  }).then(render).then(function () {
+    showToast('Garage replaced — ' + incoming.bikes.length + ' bike' + (incoming.bikes.length === 1 ? '' : 's') + ' imported.',
+      'Undo', function () { undoImport(before, addedBlobIds); });
+  }).catch(function (e) { showToast('Import failed while saving photos: ' + e.message); });
 }
 
 /* ------------------------------------------------------------------ */

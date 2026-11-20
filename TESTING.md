@@ -2,7 +2,7 @@
 
 ## Node tests — `node test.js`
 
-Plain `check(name, cond)` style, like the sibling apps. **178/178 pass.**
+Plain `check(name, cond)` style, like the sibling apps. **193/193 pass.**
 
 Covered:
 
@@ -39,6 +39,21 @@ Covered:
   money; the mockup's single-bike export shape imports (its
   "Nov 18, 2026 — this session" dates normalise to ISO); bad JSON and an
   unknown style are rejected.
+- **Import merge** — `mergeImport` adds the file's bikes without removing
+  the garage's own bikes; the imported bike arrives with its mods,
+  photos, notes, and issues attached to it; a name clash keeps both
+  bikes, the imported one renamed "Name (imported)" (a second copy of
+  the same file becomes "(imported 2)") and flagged `imported` so the
+  garage and the sheet can badge it; importing the garage's own export
+  remaps every colliding id (bike, mod, photo, note, issue) and keeps
+  every cross-reference straight — each merged bike's hero points at
+  one of its own photos, existing bikes' heroes are never re-pointed,
+  and the merged store still validates; the existing selection stands,
+  an empty garage selects the first imported bike, neither input store
+  is mutated, merging an empty file adds nothing, merged photos carry
+  their blob data through the `photoIdMap`, a merged hide-money bike
+  still hides its dollars in every style, and a bad incoming store
+  throws.
 - **Validation** — bad stage, negative cost, non-http vendor link, unknown
   style, and a resolved issue with no date all throw.
 - **Helpers** — `tagSpotFor` (carb → 56/52, unknown → centre), 6 styles
@@ -93,7 +108,7 @@ verified to decode:
 ## Playwright UI tests — `/tmp/pw-venv/bin/python test_ui.py`
 
 Serves the staging dir on 127.0.0.1 and drives the real app in Chromium
-at phone width (390×844). **80/80 pass, zero page errors, zero bad
+at phone width (390×844). **99/99 pass, zero page errors, zero bad
 requests** (the two Google Fonts requests fail in the VM sandbox — the
 proxy cannot reach fonts.googleapis.com / fonts.gstatic.com — and are
 tolerated the same way the timing helper's tests tolerate them; the app
@@ -126,7 +141,15 @@ copy; attaching a maintenance export lands "2 services logged" and
 timing file opens the bike picker (2 options) and links the picked bike
 ("Timed 20° BTDC"); linked dollars hide with the toggle and return with
 it; all three links survive a reload; removing the maintenance link
-leaves the carb and timing links on the sheet; share panel prepares and the 1080×1080 card image draws;
+leaves the carb and timing links on the sheet; **import merge** — picking
+a file first asks Merge or Replace (the choice names the file's bike);
+Merge adds the bike without removing the garage, keeps both bikes on a
+name clash with the imported one labelled "1995 Fat Boy Bobber
+(imported)" and badged Imported, and the toast names the rename; Undo
+on that toast restores the pre-import garage; merging again brings the
+bike's hero photo back as a stored blob, its 8 mods, its photos, and
+its notes; Replace (confirmed) swaps the garage for the file's one bike
+and its own Undo restores the pre-replace garage; share panel prepares and the 1080×1080 card image draws;
 delete a part → undo toast → Undo brings it back; reload → the bike
 survives in IndexedDB and the welcome does not return; export → valid
 JSON with 4 bikes including the test part; fresh profile → "Start with

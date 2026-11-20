@@ -189,6 +189,113 @@ throws('import rejects unknown style', function () {
   GBS.validateImport(JSON.stringify(bad));
 });
 
+/* --- Import merge --- */
+var oneBikeFile = (function () {
+  var one = JSON.parse(JSON.stringify(s));
+  var keep = fat.id;
+  one.bikes = one.bikes.filter(function (b) { return b.id === keep; });
+  one.mods = one.mods.filter(function (m) { return m.bikeId === keep; });
+  one.photos = one.photos.filter(function (p) { return p.bikeId === keep; });
+  one.notes = one.notes.filter(function (n) { return n.bikeId === keep; });
+  one.issues = one.issues.filter(function (i) { return i.bikeId === keep; });
+  one.selectedBikeId = keep;
+  return GBS.exportJSON(one, {});
+})();
+check('merge adds bikes without removing existing ones', (function () {
+  var merged = GBS.mergeImport(JSON.parse(JSON.stringify(s)), GBS.validateImport(oneBikeFile).store);
+  return merged.store.bikes.length === 4 && merged.added === 1 &&
+    merged.store.bikes.filter(function (b) { return b.id === fat.id; }).length === 1 &&
+    GBS.modsFor(merged.store, fat.id).length === fatMods.length;
+})());
+check('merge keeps the imported bike\u2019s mods, photos, notes and issues', (function () {
+  var merged = GBS.mergeImport(JSON.parse(JSON.stringify(s)), GBS.validateImport(oneBikeFile).store);
+  var added = merged.store.bikes.filter(function (b) { return merged.addedBikeIds.indexOf(b.id) !== -1; })[0];
+  return GBS.modsFor(merged.store, added.id).length === fatMods.length &&
+    GBS.photosFor(merged.store, added.id).length === 3 &&
+    GBS.notesFor(merged.store, added.id).length === GBS.notesFor(s, fat.id).length &&
+    GBS.issuesFor(merged.store, added.id).length === GBS.issuesFor(s, fat.id).length;
+})());
+check('merge name conflict keeps both and labels the imported one', (function () {
+  var merged = GBS.mergeImport(JSON.parse(JSON.stringify(s)), GBS.validateImport(oneBikeFile).store);
+  var names = merged.store.bikes.map(function (b) { return b.name; });
+  var added = merged.store.bikes.filter(function (b) { return merged.addedBikeIds.indexOf(b.id) !== -1; })[0];
+  return names.filter(function (n) { return n === '1995 Fat Boy Bobber'; }).length === 1 &&
+    added.name === '1995 Fat Boy Bobber (imported)' && added.imported === true &&
+    merged.renamed.length === 1 && merged.renamed[0].from === '1995 Fat Boy Bobber' &&
+    merged.renamed[0].to === '1995 Fat Boy Bobber (imported)';
+})());
+check('merge of the same file twice numbers the second copy', (function () {
+  var first = GBS.mergeImport(JSON.parse(JSON.stringify(s)), GBS.validateImport(oneBikeFile).store);
+  var second = GBS.mergeImport(first.store, GBS.validateImport(oneBikeFile).store);
+  var names = second.store.bikes.map(function (b) { return b.name; });
+  return second.store.bikes.length === 5 &&
+    names.indexOf('1995 Fat Boy Bobber (imported)') !== -1 &&
+    names.indexOf('1995 Fat Boy Bobber (imported 2)') !== -1;
+})());
+check('merge remaps every colliding id and keeps references straight', (function () {
+  /* Importing the garage's own export: every id collides. */
+  var merged = GBS.mergeImport(JSON.parse(JSON.stringify(s)), GBS.validateImport(GBS.exportJSON(s, {})).store);
+  if (merged.store.bikes.length !== 6) return false;
+  var ids = {};
+  var all = merged.store.bikes.concat(merged.store.mods, merged.store.photos, merged.store.notes, merged.store.issues);
+  for (var i = 0; i < all.length; i++) { if (ids[all[i].id]) return false; ids[all[i].id] = true; }
+  try { GBS.validateStore(merged.store); } catch (e) { return false; }
+  /* Each merged bike's hero points at one of ITS OWN photos. */
+  return merged.addedBikeIds.every(function (bid) {
+    var b = merged.store.bikes.filter(function (x) { return x.id === bid; })[0];
+    var hero = merged.store.photos.filter(function (p) { return p.id === b.heroPhotoId; })[0];
+    return hero && hero.bikeId === bid;
+  });
+})());
+check('merge does not touch the existing bikes\u2019 heroes', (function () {
+  var merged = GBS.mergeImport(JSON.parse(JSON.stringify(s)), GBS.validateImport(GBS.exportJSON(s, {})).store);
+  return merged.store.bikes.filter(function (b) { return b.id === fat.id; })[0].heroPhotoId === fat.heroPhotoId;
+})());
+check('merge keeps the existing selection', (function () {
+  var merged = GBS.mergeImport(JSON.parse(JSON.stringify(s)), GBS.validateImport(oneBikeFile).store);
+  return merged.store.selectedBikeId === fat.id;
+})());
+check('merge into an empty garage selects the first imported bike', (function () {
+  var merged = GBS.mergeImport(GBS.emptyStore(), GBS.validateImport(oneBikeFile).store);
+  return merged.store.bikes.length === 1 && merged.store.selectedBikeId === merged.store.bikes[0].id;
+})());
+check('merge does not mutate either input store', (function () {
+  var existing = JSON.parse(JSON.stringify(s));
+  var incoming = GBS.validateImport(oneBikeFile).store;
+  var beforeExisting = JSON.stringify(existing), beforeIncoming = JSON.stringify(incoming);
+  GBS.mergeImport(existing, incoming);
+  return JSON.stringify(existing) === beforeExisting && JSON.stringify(incoming) === beforeIncoming;
+})());
+check('merge of an empty file adds nothing', (function () {
+  var merged = GBS.mergeImport(JSON.parse(JSON.stringify(s)), GBS.validateImport(GBS.exportJSON(GBS.emptyStore(), {})).store);
+  return merged.added === 0 && merged.store.bikes.length === 3 && merged.renamed.length === 0;
+})());
+check('merged photos carry their blob data through the photoIdMap', (function () {
+  var withPhoto = GBS.validateImport(oneBikeFile);
+  var merged = GBS.mergeImport(JSON.parse(JSON.stringify(s)), withPhoto.store);
+  /* The seed photos are inline JPEGs, so validateImport split them
+   * into photoData; every one must map to a merged photo record. */
+  return Object.keys(withPhoto.photoData).every(function (oldId) {
+    var newId = merged.photoIdMap[oldId];
+    var rec = merged.store.photos.filter(function (p) { return p.id === newId; })[0];
+    return newId && rec && rec.hasBlob === true && withPhoto.photoData[oldId].indexOf('data:image/jpeg;base64,') === 0;
+  });
+})());
+check('merged hideMoney bike still hides its dollars in every style', (function () {
+  var hiddenOne = JSON.parse(JSON.stringify(s));
+  hiddenOne.bikes[0].hideMoney = true;
+  var merged = GBS.mergeImport(GBS.emptyStore(), GBS.validateImport(GBS.exportJSON(hiddenOne, {})).store);
+  var b = merged.store.bikes[0];
+  if (!b.hideMoney) return false;
+  var ctx2 = { mods: GBS.modsFor(merged.store, b.id), photos: [], notes: [], issues: [] };
+  return GBS.STYLES.every(function (st) { return !GBS.hasDollarAmount(GBS.renderSheet(st.id, b, ctx2)); });
+})());
+throws('mergeImport rejects a bad incoming store', function () {
+  var bad = JSON.parse(JSON.stringify(s));
+  bad.bikes[0].styleId = 'nope';
+  GBS.mergeImport(JSON.parse(JSON.stringify(s)), bad);
+});
+
 /* --- Validation --- */
 throws('validateMod rejects bad stage', function () {
   GBS.validateMod({ id: 'm', bikeId: 'b', name: 'x', cat: 'Engine', stage: 'done', date: '2026-11-18', cost: 0, hours: 0 });
