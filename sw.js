@@ -1,7 +1,7 @@
 /* Garage Build Sheets — service worker.
  * Cache-first for the app shell so the garage works offline in the
  * shop. Version lives in the cache name; bump it on every release. */
-var CACHE_NAME = 'garage-build-sheets-v2';
+var CACHE_NAME = 'garage-build-sheets-v3';
 var ASSETS = [
   './',
   './index.html',

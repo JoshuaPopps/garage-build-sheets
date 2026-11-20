@@ -28,21 +28,34 @@ check('seed has 5 notes', s.notes.length === 5);
 check('seed has 7 issues', s.issues.length === 7);
 check('all seed bikes are examples', s.bikes.every(function (b) { return b.isExample; }));
 check('seed bikes use 3 different styles', new Set(s.bikes.map(function (b) { return b.styleId; })).size === 3);
-check('seed photos are inline SVG drawings', s.photos.every(function (p) { return p.dataUrl && p.dataUrl.indexOf('data:image/svg+xml') === 0; }));
+check('seed photos are inline JPEG photos', s.photos.every(function (p) { return p.dataUrl && p.dataUrl.indexOf('data:image/jpeg;base64,') === 0; }));
 
 var fat = s.bikes[0], knuck = s.bikes[1], soft = s.bikes[2];
 function heroPhoto(bike) {
   return s.photos.filter(function (p) { return p.id === bike.heroPhotoId; })[0];
 }
 var fatHero = heroPhoto(fat), knuckHero = heroPhoto(knuck), softHero = heroPhoto(soft);
-check('seed hero drawings are distinct', fatHero.dataUrl !== knuckHero.dataUrl && fatHero.dataUrl !== softHero.dataUrl && knuckHero.dataUrl !== softHero.dataUrl);
-check('seed hero drawings carry no EXAMPLE PHOTO stamp', [fatHero, knuckHero, softHero].every(function (p) { return p.dataUrl.indexOf('EXAMPLE') === -1; }));
-check('seed hero drawings name their bike', fatHero.dataUrl.indexOf('FAT%20BOY') !== -1 && knuckHero.dataUrl.indexOf('KNUCKLEHEAD') !== -1 && softHero.dataUrl.indexOf('SOFTAIL') !== -1);
-check('all seed photos of a bike share that bike\'s drawing', s.photos.every(function (p) {
+check('seed hero photos are distinct', fatHero.dataUrl !== knuckHero.dataUrl && fatHero.dataUrl !== softHero.dataUrl && knuckHero.dataUrl !== softHero.dataUrl);
+check('seed hero photos carry no EXAMPLE PHOTO stamp', [fatHero, knuckHero, softHero].every(function (p) { return p.dataUrl.indexOf('EXAMPLE') === -1; }));
+check('seed mod pins are in bounds', s.mods.every(function (m) { return m.tag && m.tag.x >= 2 && m.tag.x <= 98 && m.tag.y >= 2 && m.tag.y <= 98; }));
+check('no two pins of a bike share one spot', s.bikes.every(function (b) {
+  var spots = GBS.modsFor(s, b.id).map(function (m) { return m.tag.x + ',' + m.tag.y; });
+  return new Set(spots).size === spots.length;
+}));
+check('seed pins keep clear of each other', s.bikes.every(function (b) {
+  var mods = GBS.modsFor(s, b.id);
+  for (var i = 0; i < mods.length; i++) {
+    for (var j = i + 1; j < mods.length; j++) {
+      if (Math.max(Math.abs(mods[i].tag.x - mods[j].tag.x), Math.abs(mods[i].tag.y - mods[j].tag.y)) < 6) return false;
+    }
+  }
+  return true;
+}));
+check('all seed photos of a bike share that bike\'s photo', s.photos.every(function (p) {
   var hero = p.bikeId === fat.id ? fatHero : p.bikeId === knuck.id ? knuckHero : softHero;
   return p.dataUrl === hero.dataUrl;
 }));
-check('bikeDrawing falls back to a labelless generic outline', GBS.bikeDrawing('unknown-id').indexOf('data:image/svg+xml') === 0 && GBS.bikeDrawing('unknown-id').indexOf('EXAMPLE') === -1 && GBS.bikeDrawing('unknown-id') !== fatHero.dataUrl);
+check('bikePhoto falls back to the Fat Boy photo', GBS.bikePhoto('unknown-id') === fatHero.dataUrl);
 var fatMods = GBS.modsFor(s, fat.id);
 var knuckMods = GBS.modsFor(s, knuck.id);
 var softMods = GBS.modsFor(s, soft.id);
@@ -192,7 +205,7 @@ throws('validateBike rejects unknown style', function () {
 throws('validateIssue rejects resolved without a date', function () {
   GBS.validateIssue({ id: 'i', bikeId: 'b', title: 't', severity: 'low', date: '2026-11-18', status: 'resolved' });
 });
-check('tagSpotFor carb', (function () { var t = GBS.tagSpotFor('S&S Super E carb'); return t.x === 56 && t.y === 52; })());
+check('tagSpotFor carb', (function () { var t = GBS.tagSpotFor('S&S Super E carb'); return t.x === 58 && t.y === 58; })());
 check('tagSpotFor falls back to centre', (function () { var t = GBS.tagSpotFor('Mystery widget'); return t.x === 50 && t.y === 50; })());
 check('6 styles in the registry', GBS.STYLES.length === 6);
 check('9 mod categories', GBS.CATEGORIES.length === 9);

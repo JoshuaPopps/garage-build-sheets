@@ -8,12 +8,12 @@ Covered:
 
 - **Seed data** — validates; 3 bikes, 15 mods, 9 photos, 5 notes, 7 issues;
   all bikes flagged EXAMPLE; 3 different styles in use; photos are inline
-  SVG drawings — one distinct blueprint per example bike (Fat Boy disc
-  wheels / bobbed fender, Knucklehead springer / fishtail, Softail
-  whitewalls / sissy bar), no "EXAMPLE PHOTO" stamp anywhere, each
-  drawing named for its bike, all three photos of a bike sharing that
-  bike's drawing, and `bikeDrawing` falling back to a labelless generic
-  outline for unknown ids.
+  JPEG data URLs — one real black-and-white photo per example bike (Fat
+  Boy: Touron's shot of the actual bike; Knucklehead and Softail:
+  generated in the same dim-garage treatment), no "EXAMPLE PHOTO" stamp
+  anywhere, all three photos of a bike sharing that bike's photo, and
+  `bikePhoto` falling back to the Fat Boy photo for unknown ids; seed mod
+  pins are in bounds and no two pins of a bike share one spot.
 - **Lifecycle math** — Fat Boy 62% / $308 invested / $623 total / 13.5 hrs;
   Knucklehead 19% / $0 / $25 / 1 hr; Softail 75% / $22 / $22 / 3 hrs;
   invested counts Purchased + Installed only; no mods → 5%.
@@ -100,7 +100,7 @@ tolerated the same way the timing helper's tests tolerate them; the app
 falls back to system fonts).
 
 Covered: first-run welcome + 3 example bikes — the garage cards show 3
-distinct hero drawings with no EXAMPLE PHOTO stamp; Keep examples hides the
+distinct hero photos with no EXAMPLE PHOTO stamp; Keep examples hides the
 welcome; detail renders with hero, progress ring (62%), 5 tabs, sheet in
 the 1990 Treatment with footer and inline-SVG QR; style picker switches
 to Magazine Feature and back; **pin dragging** — a mouse drag moves a pin
