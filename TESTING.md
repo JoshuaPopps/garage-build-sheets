@@ -2,7 +2,7 @@
 
 ## Node tests — `node test.js`
 
-Plain `check(name, cond)` style, like the sibling apps. **193/193 pass.**
+Plain `check(name, cond)` style, like the sibling apps. **222/222 pass.**
 
 Covered:
 
@@ -54,6 +54,24 @@ Covered:
   their blob data through the `photoIdMap`, a merged hide-money bike
   still hides its dollars in every style, and a bad incoming store
   throws.
+- **Sell handoff** — claim codes are 6 characters from an alphabet with
+  no 0/O/1/I/L and vary run to run; the 2-character checksum is
+  deterministic and changes with either the code or the bike name; the
+  QR text round-trips through `extractClaimCode`, which also accepts a
+  bare code (case and spaces aside) and throws on a bad checksum, on
+  garbage, and on a short code; `createHandoff` carries the full bike
+  record (1 bike, 8 mods, 3 photos, 3 notes, 3 issues for the Fat Boy),
+  embeds the claim code and the handoff kind/version, validates as an
+  import, carries the photos as JPEG data URLs, and its QR payload
+  encodes within version 10; the right code verifies, a wrong code
+  refuses, a code from another bike refuses, and verifying a
+  non-handoff file throws; a matching code merges through `mergeImport`
+  (name conflict labelled "(imported)" as usual) with the hero photo
+  kept on its own photo record, and linked summaries survive the trip;
+  a hidden-money handoff carries no `$` anywhere in the package JSON,
+  nulls the costs and the linked spend, hides its dollars in every
+  style after merging, and strips photo data URLs exactly like the
+  whole-garage export; creating a handoff for an unknown bike throws.
 - **Validation** — bad stage, negative cost, non-http vendor link, unknown
   style, and a resolved issue with no date all throw.
 - **Helpers** — `tagSpotFor` (carb → 56/52, unknown → centre), 6 styles
@@ -105,10 +123,10 @@ verified to decode:
 - jsQR is a dev-only verification tool (downloaded to /tmp) and is NOT
   shipped in the app.
 
-## Playwright UI tests — `/tmp/pw-venv/bin/python test_ui.py`
+## Playwright UI tests — `/tmp/pw-render/bin/python test_ui.py`
 
 Serves the staging dir on 127.0.0.1 and drives the real app in Chromium
-at phone width (390×844). **99/99 pass, zero page errors, zero bad
+at phone width (390×844). **113/113 pass, zero page errors, zero bad
 requests** (the two Google Fonts requests fail in the VM sandbox — the
 proxy cannot reach fonts.googleapis.com / fonts.gstatic.com — and are
 tolerated the same way the timing helper's tests tolerate them; the app
@@ -149,7 +167,14 @@ name clash with the imported one labelled "1995 Fat Boy Bobber
 on that toast restores the pre-import garage; merging again brings the
 bike's hero photo back as a stored blob, its 8 mods, its photos, and
 its notes; Replace (confirmed) swaps the garage for the file's one bike
-and its own Undo restores the pre-replace garage; share panel prepares and the 1080×1080 card image draws;
+and its own Undo restores the pre-replace garage; **sell handoff** (fresh
+profile) — the seller's panel shows a QR and a 6-character claim code,
+the downloaded handoff file carries the displayed code and the full bike
+record (1 bike, 8 mods, 3 photos with JPEG data URLs, 3 notes, 3
+issues); Data → Claim a bike asks for the code, a wrong code is refused
+with nothing merged, and the right code opens the Merge/Replace choice
+and merges through the merge path — labelled "(imported)", hero photo
+back as a stored blob, 8 mods and the notes along; share panel prepares and the 1080×1080 card image draws;
 delete a part → undo toast → Undo brings it back; reload → the bike
 survives in IndexedDB and the welcome does not return; export → valid
 JSON with 4 bikes including the test part; fresh profile → "Start with
@@ -204,8 +229,8 @@ browser.open, never via Playwright against github.io.
 ```sh
 cd ~/workspace/github-buildout/weekly/garage-build-sheets
 node test.js
-python3 -m venv /tmp/pw-venv && /tmp/pw-venv/bin/pip install playwright
-/tmp/pw-venv/bin/python test_ui.py
+python3 -m venv /tmp/pw-render && /tmp/pw-render/bin/pip install playwright
+/tmp/pw-render/bin/python test_ui.py
 ```
 
 ## How to regenerate the icons

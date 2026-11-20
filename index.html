@@ -70,6 +70,13 @@
       </div>
     </div>
     <div class="card">
+      <h3>Claim a bike</h3>
+      <p>Buying a bike from another Garage Build Sheets user? They send you a <strong>handoff file</strong> and a <strong>claim code</strong> &mdash; pick the file here, enter the code, and the bike merges into your garage with its parts, photos, notes, and issues. A wrong code adds nothing.</p>
+      <button id="claimBtn" type="button">Claim a bike (.json)</button>
+      <input id="claimFile" type="file" accept=".json,application/json" hidden>
+      <div id="claimBox"></div>
+    </div>
+    <div class="card">
       <h3>Example bikes</h3>
       <p>The three example bikes (Fat Boy, Knucklehead, Softail) are labelled <span class="badge example">Example</span>. They&rsquo;re yours to delete whenever you&rsquo;re done with them.</p>
       <button id="restoreExamplesBtn" type="button" class="secondary">Restore the example bikes</button>
@@ -82,7 +89,7 @@
     </div>
     <div class="card">
       <h3>About</h3>
-      <p id="aboutText">Garage Build Sheets — Version 1.0.4. Plain JavaScript, no dependencies, works offline. Photos stay on this device; nothing is uploaded anywhere. Sharing is opt-in only: nothing posts itself.</p>
+      <p id="aboutText">Garage Build Sheets — Version 1.0.5. Plain JavaScript, no dependencies, works offline. Photos stay on this device; nothing is uploaded anywhere. Sharing is opt-in only: nothing posts itself.</p>
       <p class="muted">Prices in the example bikes are example prices only. Specs on the sheets are what you type in &mdash; the app never invents a torque, clearance, or factory number.</p>
     </div>
   </section>

@@ -23,8 +23,8 @@
 /* Constants                                                           */
 /* ------------------------------------------------------------------ */
 
-var APP_VERSION = '1.0.4';
-var CACHE_NAME = 'garage-build-sheets-v5';
+var APP_VERSION = '1.0.5';
+var CACHE_NAME = 'garage-build-sheets-v6';
 
 var STYLES = [
   { id: 'treatment1990', name: '1990 Treatment',
@@ -1615,6 +1615,117 @@ function mergeImport(existing, incoming) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Sell handoff — QR + claim code                                      */
+/*                                                                     */
+/* Selling a bike? The seller hands the buyer two things: a handoff   */
+/* file (this bike's full record) and a short claim code. The buyer    */
+/* picks the file in Data → Claim a bike, types the code, and the      */
+/* bike merges into their garage through mergeImport — the same merge  */
+/* path as a whole-garage import, name-conflict labelling included.    */
+/* A wrong code refuses the merge outright: the code is a real check,  */
+/* not decoration.                                                     */
+/*                                                                     */
+/* The package is a one-bike store (exportJSON output) plus a         */
+/* `handoff` block, so validateImport accepts it unchanged and the     */
+/* merge path never learns a second import shape. Money is scrubbed    */
+/* by exportJSON itself — a bike that hides money carries no dollars   */
+/* in the package, exactly as in a whole-garage export (its photo      */
+/* data URLs are stripped the same way, so a hidden-money handoff     */
+/* arrives with photo records but no image data).                      */
+/*                                                                     */
+/* The QR encodes the claim code, the bike name, and a 2-character    */
+/* checksum over both, so a mis-scan is caught before the code is     */
+/* ever typed: parse the QR text and a bad checksum throws. A buyer    */
+/* can also type the 6-character code by hand — the claim box         */
+/* accepts either.                                                     */
+/* ------------------------------------------------------------------ */
+
+var HANDOFF_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+var HANDOFF_CODE_LENGTH = 6;
+function newClaimCode() {
+  var code = '';
+  for (var i = 0; i < HANDOFF_CODE_LENGTH; i++) {
+    code += HANDOFF_CODE_ALPHABET[Math.floor(Math.random() * HANDOFF_CODE_ALPHABET.length)];
+  }
+  return code;
+}
+function normalizeClaimCode(s) {
+  return String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+function isClaimCode(s) {
+  if (typeof s !== 'string' || s.length !== HANDOFF_CODE_LENGTH) return false;
+  for (var i = 0; i < s.length; i++) {
+    if (HANDOFF_CODE_ALPHABET.indexOf(s.charAt(i)) === -1) return false;
+  }
+  return true;
+}
+/* 2-character checksum over code + bike name, base-32 in the claim
+ * alphabet. Catches a mistyped code or a wrong-bike QR. */
+function handoffChecksum(code, name) {
+  var str = String(code || '') + '|' + String(name || '');
+  var hash = 0;
+  for (var i = 0; i < str.length; i++) hash = ((hash * 31) + str.charCodeAt(i)) >>> 0;
+  return HANDOFF_CODE_ALPHABET[hash % 32] + HANDOFF_CODE_ALPHABET[Math.floor(hash / 32) % 32];
+}
+function handoffQrText(code, name) {
+  return JSON.stringify({ gbs: 'handoff', c: code, n: name, k: handoffChecksum(code, name) });
+}
+/* Pull the claim code out of what the buyer typed or pasted: either
+ * the QR payload JSON (checksum verified) or the bare 6-character
+ * code. Throws on a bad checksum, a wrong shape, or a bad code. */
+function extractClaimCode(text) {
+  var t = String(text || '').trim();
+  if (t.charAt(0) === '{') {
+    var obj = parseJsonObject(t);
+    if (obj.gbs !== 'handoff' || typeof obj.c !== 'string' || typeof obj.n !== 'string' || typeof obj.k !== 'string') {
+      throw new Error('That is not a handoff code.');
+    }
+    if (handoffChecksum(obj.c, obj.n) !== obj.k) {
+      throw new Error('That QR code does not check out — scan it again, or type the 6-character code by hand.');
+    }
+    if (!isClaimCode(obj.c)) throw new Error('That QR code carries a bad claim code.');
+    return obj.c;
+  }
+  var code = normalizeClaimCode(t);
+  if (!isClaimCode(code)) throw new Error('A claim code is 6 letters and digits — no 0, O, 1, I, or L.');
+  return code;
+}
+function isHandoffPackage(data) {
+  return !!(data && data.handoff && data.handoff.kind === 'garage-build-sheets-handoff');
+}
+/* THE check: true only when the typed code matches the code baked
+ * into the file. A wrong code means no merge, no peek. */
+function verifyHandoffClaim(pkg, code) {
+  if (!isHandoffPackage(pkg)) throw new Error('That file is not a handoff package.');
+  return String(pkg.handoff.claimCode || '') === normalizeClaimCode(code);
+}
+/* Build the handoff package for one bike: the bike's full record —
+ * mods, photos (data URLs included, same as the whole-garage
+ * export), notes, issues, linked summaries — plus the handoff
+ * block with a fresh claim code. */
+function createHandoff(store, bikeId, photoDataById) {
+  validateStore(store);
+  var bike = null;
+  store.bikes.forEach(function (b) { if (b.id === bikeId) bike = b; });
+  if (!bike) throw new Error('No bike "' + bikeId + '" in this garage.');
+  var one = {
+    version: 1,
+    bikes: [bike],
+    mods: modsFor(store, bikeId),
+    photos: photosFor(store, bikeId),
+    notes: notesFor(store, bikeId),
+    issues: issuesFor(store, bikeId),
+    selectedBikeId: bikeId
+  };
+  var pkg = JSON.parse(exportJSON(one, photoDataById));
+  pkg.handoff = {
+    kind: 'garage-build-sheets-handoff', version: 1,
+    claimCode: newClaimCode(), createdAt: todayISO()
+  };
+  return pkg;
+}
+
+/* ------------------------------------------------------------------ */
 /* Seed data — three EXAMPLE bikes, clearly labelled, deletable.      */
 /* Example prices only. No real personal data.                         */
 /* ------------------------------------------------------------------ */
@@ -1808,6 +1919,12 @@ var GBS_API = {
   shareText: shareText, shareCardModel: shareCardModel,
   qrEncode: qrEncode, qrToSvg: qrToSvg, qrPayload: qrPayload, qrByteCapacity: qrByteCapacity,
   exportJSON: exportJSON, validateImport: validateImport, mergeImport: mergeImport,
+  HANDOFF_CODE_ALPHABET: HANDOFF_CODE_ALPHABET, HANDOFF_CODE_LENGTH: HANDOFF_CODE_LENGTH,
+  newClaimCode: newClaimCode, normalizeClaimCode: normalizeClaimCode,
+  isClaimCode: isClaimCode, handoffChecksum: handoffChecksum,
+  handoffQrText: handoffQrText, extractClaimCode: extractClaimCode,
+  isHandoffPackage: isHandoffPackage, verifyHandoffClaim: verifyHandoffClaim,
+  createHandoff: createHandoff,
   LINKED_APPS: LINKED_APPS, linkedAppById: linkedAppById,
   normalizeName: normalizeName, namesMatch: namesMatch,
   matchLinkedCandidate: matchLinkedCandidate,

@@ -600,6 +600,84 @@ def main():
               page.locator(".bike-card").count() == 5
               and page.locator(".bike-card", has_text="1995 Fat Boy Bobber (imported)").count() == 1)
 
+        print("== sell handoff ==")
+        # A fresh profile: seller hands the Fat Boy off, buyer claims it
+        # with the code. Wrong code first — nothing merges.
+        ctx3 = browser.new_context(viewport={"width": 390, "height": 844})
+        page3 = ctx3.new_page()
+        page3.on("pageerror", lambda e: errors.append("p3: " + str(e)))
+        page3.on("requestfailed", lambda r: font_failures.append(r.url) if any(h in r.url for h in FONT_HOSTS) else bad_requests.append(r.url))
+        page3.on("response", lambda r: font_failures.append(r.url) if r.status >= 400 and any(h in r.url for h in FONT_HOSTS) else (bad_requests.append(r.url) if r.status >= 400 else None))
+        page3.goto(BASE)
+        page3.wait_for_selector(".bike-card", timeout=15000)
+        page3.click("#welcomeKeep")
+        page3.locator(".bike-card", has_text="1995 Fat Boy Bobber").click()
+        page3.wait_for_selector("#detailWrap .hero-wrap", timeout=10000)
+        page3.locator('[data-action="tab"][data-id="sheet"]').click()
+        page3.locator('[data-action="handoff-open"]').click()
+        page3.wait_for_selector(".handoff-panel", timeout=10000)
+        check("handoff panel shows a QR", page3.locator(".handoff-qr svg").count() == 1)
+        code = page3.locator("#handoffCode").inner_text().strip()
+        check("handoff panel shows a 6-character claim code",
+              re.fullmatch(r"[A-HJ-NP-Z2-9]{6}", code) is not None)
+        handoff_path = "/tmp/gbs-handoff-test.json"
+        with page3.expect_download(timeout=15000) as dl_info:
+            page3.locator('[data-action="handoff-download"]').click()
+        dl = dl_info.value
+        dl.save_as(handoff_path)
+        with open(handoff_path) as f:
+            pkg = json.load(f)
+        check("handoff file carries the displayed claim code",
+              pkg["handoff"]["claimCode"] == code)
+        check("handoff file holds the full bike record",
+              len(pkg["bikes"]) == 1 and len(pkg["mods"]) == 8
+              and len(pkg["photos"]) == 3 and len(pkg["notes"]) == 3
+              and len(pkg["issues"]) == 3)
+        check("handoff file carries the photos",
+              all(p.get("dataUrl", "").startswith("data:image/jpeg") for p in pkg["photos"]))
+        # Buyer side: Data -> Claim a bike, pick the file.
+        page3.click('[data-nav="data"]')
+        page3.set_input_files("#claimFile", handoff_path)
+        page3.wait_for_selector("#claimForm", timeout=5000)
+        check("claim box names the bike", "1995 Fat Boy Bobber" in page3.locator("#claimForm").inner_text())
+        # Wrong code: refused, nothing merges. Wait on the toast's own
+        # text — the download toast may still be showing.
+        wrong = ("A" if code[0] != "A" else "B") + code[1:]
+        page3.fill("#claimCode", wrong)
+        page3.click("#claimForm button[type='submit']")
+        page3.wait_for_function(
+            "() => document.getElementById('toastMsg') && "
+            "document.getElementById('toastMsg').innerText.includes('does not match')", timeout=5000)
+        check("wrong claim code is refused",
+              "does not match" in page3.locator("#toast").inner_text())
+        check("wrong code merges nothing", page3.locator(".bike-card").count() == 3)
+        # Right code: into the Merge/Replace choice, then merge.
+        page3.fill("#claimCode", code)
+        page3.click("#claimForm button[type='submit']")
+        page3.wait_for_selector("#importChoice", state="visible", timeout=5000)
+        check("matching code opens the import choice",
+              "Claim code matched" in page3.locator("#importChoice").inner_text())
+        page3.click("#importMergeBtn")
+        page3.wait_for_function(
+            "() => document.querySelectorAll('.bike-card').length === 4", timeout=10000)
+        check("claim merge adds the bike",
+              page3.locator(".bike-card").count() == 4)
+        check("claimed bike is labelled (imported)",
+              page3.locator(".bike-card", has_text="1995 Fat Boy Bobber (imported)").count() == 1)
+        page3.click('[data-nav="garage"]')
+        page3.locator(".bike-card", has_text="1995 Fat Boy Bobber (imported)").click()
+        page3.wait_for_selector("#detailWrap .hero-wrap", timeout=10000)
+        hero_src = page3.locator("#heroImg").get_attribute("src")
+        check("claimed bike's hero photo survived as a stored blob",
+              (hero_src or "").startswith("blob:"))
+        page3.locator('[data-action="tab"][data-id="mods"]').click()
+        check("claimed bike's mods came along",
+              page3.locator(".mod-card").count() == 8)
+        page3.locator('[data-action="tab"][data-id="notes"]').click()
+        check("claimed bike's notes came along",
+              "Enrichener-only start" in page3.locator(".timeline").inner_text())
+        ctx3.close()
+
         print("== empty garage (fresh profile) ==")
         ctx2 = browser.new_context(viewport={"width": 390, "height": 844})
         page2 = ctx2.new_page()

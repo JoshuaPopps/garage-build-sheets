@@ -166,6 +166,8 @@ var ui = {
   editingPhotoId: null,
   linkPicker: null,
   importPending: null,
+  handoff: null,
+  claimPending: null,
   showBikeForm: false, showModForm: false, showNoteForm: false, showIssueForm: false, showPhotoForm: false
 };
 var toastTimer = null;
@@ -327,6 +329,14 @@ function bindStatic() {
   document.getElementById('importMergeBtn').addEventListener('click', applyImportMerge);
   document.getElementById('importReplaceBtn').addEventListener('click', applyImportReplace);
   document.getElementById('importCancelBtn').addEventListener('click', function () { hideImportChoice(); render(); });
+  document.getElementById('claimBtn').addEventListener('click', function () {
+    document.getElementById('claimFile').click();
+  });
+  document.getElementById('claimFile').addEventListener('change', function (ev) {
+    var f = ev.target.files && ev.target.files[0];
+    if (f) doClaimFile(f);
+    ev.target.value = '';
+  });
   document.getElementById('restoreExamplesBtn').addEventListener('click', restoreExamples);
   document.getElementById('deleteExamplesBtn').addEventListener('click', function () { deleteExamples(false); });
   document.getElementById('resetBtn').addEventListener('click', resetAll);
@@ -534,10 +544,35 @@ function sheetPaneHTML(bike, ctx) {
     '<button type="button" data-action="print-sheet">Print shop sheet</button> ' +
     '<button type="button" class="secondary" data-action="download-txt" data-id="' + esc(bike.id) + '">Download this sheet (.txt)</button> ' +
     '<button type="button" class="secondary" data-action="download-bike-json" data-id="' + esc(bike.id) + '">Download this bike (.json)</button> ' +
-    '<button type="button" data-action="share-open" data-id="' + esc(bike.id) + '">Share this build</button></div>';
+    '<button type="button" data-action="share-open" data-id="' + esc(bike.id) + '">Share this build</button> ' +
+    '<button type="button" class="secondary" data-action="handoff-open" data-id="' + esc(bike.id) + '">Hand off this bike</button></div>';
   h += '<div id="sharePanel">' + sharePanelHTML(bike, ctx) + '</div>';
+  h += '<div id="handoffPanel">' + handoffPanelHTML(bike) + '</div>';
   h += GBS.renderSheet(bike.styleId, bike, ctx);
   h += connectedAppsHTML(bike);
+  return h;
+}
+/* Sell handoff — the seller's side. The panel shows a QR encoding
+ * the claim code (plus the bike name and a checksum) and the code
+ * itself, and downloads or shares the handoff file. The code belongs
+ * to the file: a new code means a new file to download. */
+function handoffPanelHTML(bike) {
+  if (!ui.handoff || ui.handoff.bikeId !== bike.id) return '';
+  var h = '<div class="card handoff-panel"><h3>Hand off this bike</h3>' +
+    '<p class="muted">Give the buyer two things: the handoff file below, and the claim code. ' +
+    'They open Garage Build Sheets &rarr; Data &rarr; Claim a bike, pick the file, and type the code — ' +
+    'then the bike merges into their garage with its parts, photos, notes, and issues. ' +
+    'Nothing leaves this device until you send the file yourself.</p>' +
+    '<div class="handoff-qr">' + ui.handoff.qrSvg + '</div>' +
+    '<p class="muted">The QR carries the claim code — the buyer can scan it with their camera and paste the text, or just type the code.</p>' +
+    '<p>Claim code</p><p class="handoff-code" id="handoffCode">' + esc(ui.handoff.code) + '</p>' +
+    '<p class="muted">The code belongs to the file: if you make a new code, download the file again — a file downloaded earlier keeps its old code.</p>';
+  if (bike.hideMoney) h += '<p class="muted"><strong>Money is hidden on this build</strong> — the handoff file carries no dollar figures, and its photos arrive without image data, the same as a whole-garage export.</p>';
+  h += '<button type="button" data-action="handoff-download">Download handoff file (.json)</button> ' +
+    '<button type="button" class="secondary" data-action="handoff-share">Share via your phone</button> ' +
+    '<button type="button" class="secondary" data-action="handoff-copy-code">Copy claim code</button> ' +
+    '<button type="button" class="secondary" data-action="handoff-new-code">New code</button> ' +
+    '<button type="button" class="secondary" data-action="handoff-close">Close</button></div>';
   return h;
 }
 /* Connected apps — Stage 1. Jump links open the sibling app (the
@@ -935,6 +970,9 @@ function onClick(ev) {
       if (!bike) break;
       bike.hideMoney = !bike.hideMoney;
       if (ui.sharePrepared) { ui.sharePrepared = false; }
+      /* A handoff package was built with the old money state — the
+       * seller re-opens the panel and it is rebuilt scrubbed. */
+      ui.handoff = null;
       persist().then(render);
       showToast(bike.hideMoney ? 'Money hidden on this build.' : 'Money visible on this build.');
       break;
@@ -955,6 +993,20 @@ function onClick(ev) {
     case 'share-native': nativeShare(); break;
     case 'share-copy': copyShareText(); break;
     case 'share-download': downloadShareCard(); break;
+    case 'handoff-open': openHandoff(bike); break;
+    case 'handoff-close': ui.handoff = null; render(); break;
+    case 'handoff-download': downloadHandoff(); break;
+    case 'handoff-share': nativeHandoffShare(); break;
+    case 'handoff-copy-code': copyHandoffCode(); break;
+    case 'handoff-new-code': {
+      if (bike) {
+        ui.handoff = null;
+        openHandoff(bike);
+        showToast('New claim code — download the file again, the old file keeps its old code.');
+      }
+      break;
+    }
+    case 'claim-cancel': ui.claimPending = null; renderClaimBox(); break;
     case 'add-mod': ui.showModForm = true; ui.editingModId = null; ui.tab = 'mods'; render(); break;
     case 'edit-mod': ui.showModForm = true; ui.editingModId = id; ui.tab = 'mods'; render(); break;
     case 'cancel-mod-form': ui.showModForm = false; ui.editingModId = null; render(); break;
@@ -1075,6 +1127,7 @@ function onSubmit(ev) {
   else if (form.id === 'noteForm') submitNoteForm(form);
   else if (form.id === 'issueForm') submitIssueForm(form);
   else if (form.id === 'photoForm') submitPhotoForm(form);
+  else if (form.id === 'claimForm') submitClaimForm(form);
 }
 document.addEventListener('input', function (ev) {
   if (ev.target && ev.target.id === 'modSearch') {
@@ -1662,6 +1715,67 @@ function downloadShareCard() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Sell handoff — seller side                                          */
+/* ------------------------------------------------------------------ */
+function openHandoff(bike) {
+  if (!bike) return;
+  var photoIds = GBS.photosFor(store, bike.id).map(function (p) { return p.id; });
+  collectPhotoData(photoIds).then(function (photoData) {
+    var pkg = GBS.createHandoff(store, bike.id, photoData);
+    var qrText = GBS.handoffQrText(pkg.handoff.claimCode, bike.name);
+    ui.handoff = {
+      bikeId: bike.id, pkg: pkg, code: pkg.handoff.claimCode,
+      qrText: qrText, qrSvg: GBS.qrToSvg(qrText, 4)
+    };
+    ui.sharePrepared = false;
+    render().then(function () {
+      var panel = document.getElementById('handoffPanel');
+      if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  }).catch(function (e) { showToast('Could not build the handoff: ' + e.message); });
+}
+function downloadHandoff() {
+  if (!ui.handoff) return;
+  var bike = findBike(ui.handoff.bikeId);
+  downloadBlob(new Blob([JSON.stringify(ui.handoff.pkg, null, 2)], { type: 'application/json' }),
+    slug(bike ? bike.name : 'build') + '-handoff.json');
+  showToast('Handoff file downloaded — send it to the buyer with the claim code.');
+}
+function nativeHandoffShare() {
+  if (!ui.handoff) return;
+  var bike = findBike(ui.handoff.bikeId);
+  var text = 'Here is my ' + (bike ? bike.name : 'bike') +
+    ' — its full build sheet, mods, photos, notes, and issues. ' +
+    'Open Garage Build Sheets → Data → Claim a bike, pick the attached file, and enter claim code ' + ui.handoff.code + '.';
+  var blob = new Blob([JSON.stringify(ui.handoff.pkg, null, 2)], { type: 'application/json' });
+  var file = new File([blob], slug(bike ? bike.name : 'build') + '-handoff.json', { type: 'application/json' });
+  if (navigator.share) {
+    var data = { text: text };
+    if (navigator.canShare && navigator.canShare({ files: [file] })) data.files = [file];
+    navigator.share(data).then(function () { showToast('Shared — you picked where it went.'); })
+      .catch(function (e) {
+        if (e && e.name !== 'AbortError') showToast('Sharing did not go through — try Download handoff file instead.');
+      });
+  } else {
+    showToast('This browser has no share sheet — use Download handoff file.');
+  }
+}
+function copyHandoffCode() {
+  if (!ui.handoff) return;
+  var code = ui.handoff.code;
+  function done() { showToast('Claim code copied.'); }
+  function fallback() {
+    var ta = document.createElement('textarea');
+    ta.value = code; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); done(); } catch (e) { showToast('Could not copy — long-press the code to copy it.'); }
+    ta.remove();
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(code).then(done, fallback);
+  } else fallback();
+}
+
+/* ------------------------------------------------------------------ */
 /* Downloads, export, import                                           */
 /* ------------------------------------------------------------------ */
 function downloadSheetTxt(id) {
@@ -1717,26 +1831,89 @@ function doImport(file) {
     var result;
     try { result = GBS.validateImport(String(reader.result)); }
     catch (e) { showToast('That file could not be imported: ' + e.message); return; }
-    /* The choice is the confirm: Merge adds the file's bikes
-     * alongside this garage, Replace wipes this garage for the
-     * file. Nothing is applied until the user picks one. */
-    ui.importPending = { result: result, fileName: file.name };
-    var incoming = result.store;
-    document.getElementById('importChoiceText').textContent =
-      'This file holds ' + incoming.bikes.length + ' bike' + (incoming.bikes.length === 1 ? '' : 's') +
-      ' — ' + incoming.bikes.map(function (b) { return b.name; }).join(', ') + '. ' +
-      'Your garage has ' + store.bikes.length + ' bike' + (store.bikes.length === 1 ? '' : 's') + '.';
-    document.getElementById('importChoiceNames').textContent =
-      'Merge adds the file\u2019s bikes next to yours — a bike with the same name as one you already have is kept as a separate build, labelled \u201c(imported)\u201d. Replace wipes this garage and uses only the file\u2019s bikes. Export first if you want a safety copy.';
-    document.getElementById('importChoice').hidden = false;
-    document.getElementById('importChoice').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    showImportChoice(result, file.name, '');
   };
   reader.onerror = function () { showToast('Could not read that file.'); };
   reader.readAsText(file);
 }
+/* The choice is the confirm: Merge adds the file's bikes alongside
+ * this garage, Replace wipes this garage for the file. Nothing is
+ * applied until the user picks one. */
+function showImportChoice(result, fileName, prefix) {
+  ui.importPending = { result: result, fileName: fileName };
+  var incoming = result.store;
+  document.getElementById('importChoiceText').textContent =
+    (prefix || '') + 'This file holds ' + incoming.bikes.length + ' bike' + (incoming.bikes.length === 1 ? '' : 's') +
+    ' — ' + incoming.bikes.map(function (b) { return b.name; }).join(', ') + '. ' +
+    'Your garage has ' + store.bikes.length + ' bike' + (store.bikes.length === 1 ? '' : 's') + '.';
+  document.getElementById('importChoiceNames').textContent =
+    'Merge adds the file\u2019s bikes next to yours — a bike with the same name as one you already have is kept as a separate build, labelled \u201c(imported)\u201d. Replace wipes this garage and uses only the file\u2019s bikes. Export first if you want a safety copy.';
+  document.getElementById('importChoice').hidden = false;
+  document.getElementById('importChoice').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
 function hideImportChoice() {
   ui.importPending = null;
   document.getElementById('importChoice').hidden = true;
+}
+/* ------------------------------------------------------------------ */
+/* Sell handoff — buyer side                                           */
+/*                                                                     */
+/* The buyer picks the seller's handoff file; the app checks it is    */
+/* a handoff package, then asks for the claim code. A wrong code      */
+/* refuses the merge — the bike is never added. A matching code       */
+/* routes into the same Merge/Replace choice as any other import,     */
+/* so the handoff merges through the existing merge path.             */
+/* ------------------------------------------------------------------ */
+function doClaimFile(file) {
+  var reader = new FileReader();
+  reader.onload = function () {
+    var result;
+    try { result = GBS.validateImport(String(reader.result)); }
+    catch (e) { showToast('That file could not be read: ' + e.message); return; }
+    if (!GBS.isHandoffPackage(result.store)) {
+      showToast('That file is not a handoff package — it has no claim code. Use Import garage for a whole-garage file.');
+      return;
+    }
+    ui.claimPending = { result: result, fileName: file.name };
+    renderClaimBox();
+    var box = document.getElementById('claimBox');
+    if (box) box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
+  reader.onerror = function () { showToast('Could not read that file.'); };
+  reader.readAsText(file);
+}
+function renderClaimBox() {
+  var box = document.getElementById('claimBox');
+  if (!box) return;
+  var pending = ui.claimPending;
+  if (!pending) { box.innerHTML = ''; return; }
+  var bike = pending.result.store.bikes[0];
+  box.innerHTML = '<form id="claimForm" class="card claim-box"><h4>Claim this bike</h4>' +
+    '<p>The file holds <strong>' + esc(bike ? bike.name : 'a bike') + '</strong>' +
+    (bike ? ' — ' + esc(bike.base) : '') + '. Enter the claim code the seller gave you — it is on their QR, or in their message.</p>' +
+    '<label>Claim code <span class="hint">6 letters and digits, or paste the QR text.</span>' +
+    '<input type="text" id="claimCode" class="claim-code-input" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="e.g. K7M2Q9"></label>' +
+    '<button type="submit">Claim this bike</button> ' +
+    '<button type="button" class="secondary" data-action="claim-cancel">Cancel</button></form>';
+}
+function submitClaimForm(form) {
+  var pending = ui.claimPending;
+  if (!pending) return;
+  var input = document.getElementById('claimCode');
+  var raw = input ? input.value : '';
+  var code;
+  try { code = GBS.extractClaimCode(raw); }
+  catch (e) { showToast(e.message); return; }
+  var ok;
+  try { ok = GBS.verifyHandoffClaim(pending.result.store, code); }
+  catch (e) { showToast(e.message); return; }
+  if (!ok) {
+    showToast('That claim code does not match this handoff file — check the code and try again. The bike was not added.');
+    return;
+  }
+  ui.claimPending = null;
+  renderClaimBox();
+  showImportChoice(pending.result, pending.fileName, 'Claim code matched — ');
 }
 /* Save an import's photo blobs under their (possibly remapped) ids. */
 function saveImportPhotos(photoData, idMap) {

@@ -625,6 +625,15 @@ td.num, th.num { text-align: right; }
 .link-picker { border: 2px solid var(--purple, #9d6bff); margin-top: 10px; }
 .import-choice { border: 2px solid var(--purple, #9d6bff); margin-top: 10px; }
 .import-choice button { margin: 2px 4px 2px 0; }
+
+/* Sell handoff — QR + claim code. The QR sits on a white card so
+ * the code scans cleanly against the black sheet. */
+.handoff-panel { border: 2px solid var(--purple, #9d6bff); }
+.handoff-qr { background: #fff; padding: 12px; border-radius: var(--radius); display: inline-block; margin: 6px 0; }
+.handoff-qr svg { display: block; width: 220px; height: 220px; }
+.handoff-code { font-family: "Archivo Narrow", system-ui, sans-serif; font-size: 34px; font-weight: 700; letter-spacing: .35em; color: var(--accent-bright); margin: 4px 0 10px; }
+.claim-code-input { text-transform: uppercase; letter-spacing: .3em; }
+.claim-box { border: 2px solid var(--purple, #9d6bff); margin-top: 10px; }
 /* Linked block inside the styled sheet — one shared helper renders
  * it in all six styles, so it stays readable on every paper. */
 .sheet .linked-notes { margin: 6px 0 0; padding-left: 18px; }

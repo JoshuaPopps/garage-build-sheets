@@ -604,5 +604,108 @@ check('linked URLs are the live Pages sites', GBS.LINKED_APPS.every(function (a)
   return a.url.indexOf('https://joshuapopps.github.io/') === 0;
 }));
 
+/* --- Sell handoff — QR + claim code --- */
+var handoffPkg = GBS.createHandoff(s, fat.id, {});
+check('newClaimCode is 6 chars from the claim alphabet', (function () {
+  var c = GBS.newClaimCode();
+  return c.length === 6 && c.split('').every(function (ch) { return GBS.HANDOFF_CODE_ALPHABET.indexOf(ch) !== -1; });
+})());
+check('claim codes vary', (function () {
+  var seen = {};
+  for (var i = 0; i < 20; i++) seen[GBS.newClaimCode()] = true;
+  return Object.keys(seen).length > 1;
+})());
+check('handoffChecksum is 2 chars from the claim alphabet', (function () {
+  var k = GBS.handoffChecksum('K7M2Q9', '1995 Fat Boy Bobber');
+  return k.length === 2 && k.split('').every(function (ch) { return GBS.HANDOFF_CODE_ALPHABET.indexOf(ch) !== -1; });
+})());
+check('handoffChecksum is deterministic', GBS.handoffChecksum('K7M2Q9', '1995 Fat Boy Bobber') === GBS.handoffChecksum('K7M2Q9', '1995 Fat Boy Bobber'));
+check('handoffChecksum changes with the bike name', GBS.handoffChecksum('K7M2Q9', '1995 Fat Boy Bobber') !== GBS.handoffChecksum('K7M2Q9', '1947 Knucklehead'));
+check('handoffChecksum changes with the code', GBS.handoffChecksum('K7M2Q9', '1995 Fat Boy Bobber') !== GBS.handoffChecksum('K7M2R9', '1995 Fat Boy Bobber'));
+check('handoff QR text round-trips through extractClaimCode', GBS.extractClaimCode(GBS.handoffQrText('K7M2Q9', '1995 Fat Boy Bobber')) === 'K7M2Q9');
+check('extractClaimCode accepts a bare code, case and spaces aside', GBS.extractClaimCode('  k7m2q9 ') === 'K7M2Q9');
+throws('extractClaimCode rejects a bad QR checksum', function () {
+  var bad = JSON.parse(GBS.handoffQrText('K7M2Q9', '1995 Fat Boy Bobber'));
+  bad.k = bad.k === 'AA' ? 'BB' : 'AA';
+  GBS.extractClaimCode(JSON.stringify(bad));
+});
+throws('extractClaimCode rejects garbage', function () { GBS.extractClaimCode('hello world'); });
+throws('extractClaimCode rejects a short code', function () { GBS.extractClaimCode('K7M2'); });
+check('createHandoff carries the full bike record', handoffPkg.bikes.length === 1 && handoffPkg.bikes[0].name === '1995 Fat Boy Bobber' &&
+  handoffPkg.mods.length === 8 && handoffPkg.photos.length === 3 && handoffPkg.notes.length === 3 && handoffPkg.issues.length === 3);
+check('createHandoff embeds a claim code', (function () {
+  return GBS.isHandoffPackage(handoffPkg) && handoffPkg.handoff.version === 1 &&
+    GBS.isClaimCode(handoffPkg.handoff.claimCode) && typeof handoffPkg.handoff.createdAt === 'string';
+})());
+check('handoff package validates as an import', (function () {
+  var back = GBS.validateImport(JSON.stringify(handoffPkg));
+  return back.store.bikes.length === 1 && back.store.mods.length === 8;
+})());
+check('handoff photos carry their image data', handoffPkg.photos.every(function (p) { return p.dataUrl && p.dataUrl.indexOf('data:image/jpeg;base64,') === 0; }));
+check('handoff QR payload encodes within version 10', (function () {
+  var q = GBS.qrEncode(GBS.handoffQrText(handoffPkg.handoff.claimCode, fat.name));
+  return q.version >= 1 && q.version <= 10;
+})());
+function wrongCodeFor(code) {
+  var alpha = GBS.HANDOFF_CODE_ALPHABET;
+  var first = alpha[(alpha.indexOf(code.charAt(0)) + 1) % alpha.length];
+  return first + code.slice(1);
+}
+check('right claim code verifies', GBS.verifyHandoffClaim(handoffPkg, handoffPkg.handoff.claimCode));
+check('wrong claim code refuses', !GBS.verifyHandoffClaim(handoffPkg, wrongCodeFor(handoffPkg.handoff.claimCode)));
+check('claim code from another bike refuses', (function () {
+  var other = GBS.createHandoff(s, knuck.id, {});
+  return other.handoff.claimCode !== handoffPkg.handoff.claimCode &&
+    !GBS.verifyHandoffClaim(handoffPkg, other.handoff.claimCode);
+})());
+throws('verifyHandoffClaim throws for a non-handoff file', function () {
+  GBS.verifyHandoffClaim(JSON.parse(GBS.exportJSON(s, {})), 'K7M2Q9');
+});
+check('right code merges through the merge path', (function () {
+  var merged = GBS.mergeImport(JSON.parse(JSON.stringify(s)), GBS.validateImport(JSON.stringify(handoffPkg)).store);
+  var added = merged.store.bikes.filter(function (b) { return merged.addedBikeIds.indexOf(b.id) !== -1; })[0];
+  return merged.store.bikes.length === 4 && added.name === '1995 Fat Boy Bobber (imported)' && added.imported === true &&
+    GBS.modsFor(merged.store, added.id).length === 8 &&
+    GBS.photosFor(merged.store, added.id).length === 3 &&
+    GBS.notesFor(merged.store, added.id).length === 3 &&
+    GBS.issuesFor(merged.store, added.id).length === 3;
+})());
+check('merged handoff bike keeps its hero photo', (function () {
+  var merged = GBS.mergeImport(GBS.emptyStore(), GBS.validateImport(JSON.stringify(handoffPkg)).store);
+  var b = merged.store.bikes[0];
+  var hero = merged.store.photos.filter(function (p) { return p.id === b.heroPhotoId; })[0];
+  return hero && hero.bikeId === b.id && hero.hasBlob === true;
+})());
+check('handoff keeps linked summaries', (function () {
+  var st = JSON.parse(JSON.stringify(s));
+  var b = st.bikes[0];
+  GBS.attachLinkedSummary(b, maintSummary);
+  GBS.attachLinkedSummary(b, carbSummary);
+  var pkg = GBS.createHandoff(st, fat.id, {});
+  var merged = GBS.mergeImport(GBS.emptyStore(), GBS.validateImport(JSON.stringify(pkg)).store);
+  var mb = merged.store.bikes[0];
+  return mb.links && mb.links.maintenance.tasksDone === 2 && mb.links.carb.carbs[0].mainJet === '0.076';
+})());
+/* Hidden money: the package must carry no dollars at all — not in
+ * costs, not in text, not in a linked summary. */
+var hiddenHandoffStore = JSON.parse(JSON.stringify(s));
+hiddenHandoffStore.bikes[0].hideMoney = true;
+GBS.attachLinkedSummary(hiddenHandoffStore.bikes[0], maintSummary);
+var hiddenPkg = GBS.createHandoff(hiddenHandoffStore, fat.id, {});
+check('hidden-money handoff carries no dollars anywhere', !GBS.hasDollarAmount(JSON.stringify(hiddenPkg)));
+check('hidden-money handoff nulls costs and linked spend', hiddenPkg.mods.every(function (m) { return m.cost === null && m.costHidden === true; }) &&
+  hiddenPkg.bikes[0].links.maintenance.totalSpent === null && hiddenPkg.bikes[0].links.maintenance.costHidden === true &&
+  hiddenPkg.bikes[0].links.maintenance.lastService.cost === null);
+check('hidden-money handoff merged bike hides dollars in every style', (function () {
+  var merged = GBS.mergeImport(GBS.emptyStore(), GBS.validateImport(JSON.stringify(hiddenPkg)).store);
+  var b = merged.store.bikes[0];
+  if (!b.hideMoney) return false;
+  var ctx2 = { mods: GBS.modsFor(merged.store, b.id), photos: [], notes: GBS.notesFor(merged.store, b.id), issues: GBS.issuesFor(merged.store, b.id) };
+  return GBS.STYLES.every(function (st) { return !GBS.hasDollarAmount(GBS.renderSheet(st.id, b, ctx2)); });
+})());
+check('hidden-money handoff strips photo data like the export', hiddenPkg.photos.every(function (p) { return !p.dataUrl; }));
+throws('createHandoff throws for an unknown bike', function () { GBS.createHandoff(s, 'no-such-bike', {}); });
+check('isHandoffPackage spots a handoff and a plain store', GBS.isHandoffPackage(handoffPkg) && !GBS.isHandoffPackage(JSON.parse(GBS.exportJSON(s, {}))));
+
 console.log('\n' + passed + ' passed, ' + failed + ' failed.');
 if (failed) { console.log('Failures: ' + failures.join(', ')); process.exit(1); }
