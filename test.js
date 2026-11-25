@@ -929,5 +929,223 @@ check('hidden-money handoff strips photo data like the export', hiddenPkg.photos
 throws('createHandoff throws for an unknown bike', function () { GBS.createHandoff(s, 'no-such-bike', {}); });
 check('isHandoffPackage spots a handoff and a plain store', GBS.isHandoffPackage(handoffPkg) && !GBS.isHandoffPackage(JSON.parse(GBS.exportJSON(s, {}))));
 
+/* --- Pocket Garage handoff, receiving side: dyno run -> mod --- */
+/* (Not the sell-handoff above: that moves a whole bike with a claim
+ * code. This one takes a single dyno run and makes one Idea mod.) */
+function exampleDynoHandoff(overrides) {
+  var h = {
+    format: 'pocket-garage-handoff', version: 1, kind: 'dyno-run-to-mod',
+    sentAt: '2026-11-24T18:00:00.000Z', from: 'popps-garage-dyno',
+    bike: { rosterKey: 'b1', name: '1995 Fat Boy Bobber' },
+    payload: { run: {
+      id: 'r8x2k1a9b3c', savedAt: '2026-11-24T17:40:00.000Z',
+      label: 'Evolution Big Twin — 1340 (80 ci) · S&S Super E · Andrews EV27',
+      combo: { baseline: 'evo-1340', displacement_ci: 80, compression: 9.5,
+        carb: 'ss-e', cam: 'andrews-ev27', exhaust: 'short-pipes',
+        heads: 'stock', air: 'stock', fuel: 'pump', rev_limit: 6500 },
+      peak_hp: 68.4, peak_hp_rpm: 5200, peak_tq: 72.1, peak_tq_rpm: 3600,
+      tempF: 77, altFt: 1152
+    } }
+  };
+  if (overrides) Object.keys(overrides).forEach(function (k) { h[k] = overrides[k]; });
+  return h;
+}
+var _dh = exampleDynoHandoff();
+var _dhB64 = GBS.encodePocketHandoff(_dh);
+check('pocket handoff encodes to base64url (no + / or =)', /^[-A-Za-z0-9_]+$/.test(_dhB64));
+check('pocket handoff round-trips through base64url',
+  JSON.stringify(GBS.parsePocketHandoff(_dhB64)) === JSON.stringify(_dh));
+check('pocket handoff parses from raw pasted JSON too',
+  GBS.parsePocketHandoff(JSON.stringify(_dh)).payload.run.peak_hp === 68.4);
+throws('pocket handoff with wrong format rejected', function () {
+  GBS.parsePocketHandoff(JSON.stringify(exampleDynoHandoff({ format: 'nope' })));
+});
+throws('pocket handoff version 2 rejected', function () {
+  GBS.parsePocketHandoff(JSON.stringify(exampleDynoHandoff({ version: 2 })));
+});
+throws('diagnosis kind rejected by build sheets', function () {
+  GBS.parsePocketHandoff(JSON.stringify(exampleDynoHandoff({ kind: 'diagnosis-to-carb' })));
+});
+throws('dyno run with zero peak hp rejected', function () {
+  var h = exampleDynoHandoff(); h.payload.run.peak_hp = 0;
+  GBS.parsePocketHandoff(JSON.stringify(h));
+});
+throws('dyno run with no baseline rejected', function () {
+  var h = exampleDynoHandoff(); h.payload.run.combo.baseline = '';
+  GBS.parsePocketHandoff(JSON.stringify(h));
+});
+throws('oversize pocket handoff rejected', function () {
+  var h = exampleDynoHandoff(); h.payload.run.label = new Array(9000).join('x');
+  GBS.parsePocketHandoff(JSON.stringify(h));
+});
+check('Fat Boy resolves by name match (no pin yet)',
+  (function () { var r = GBS.resolvePocketHandoffBike(s, _dh); return r.status === 'matched' && r.via === 'name'; })());
+GBS.pinPocketRosterKey(s, 'b1', fat.id);
+check('after pinning, the same handoff resolves by roster key',
+  GBS.resolvePocketHandoffBike(s, _dh).via === 'roster');
+check('resolution carries the bike id to apply against',
+  GBS.resolvePocketHandoffBike(s, _dh).bikeId === fat.id);
+throws('pinning the same key to a second bike is refused', function () {
+  GBS.pinPocketRosterKey(s, 'b1', knuck.id);
+});
+check('unknown bike resolves to unknown, never a guess',
+  (function () { var h = exampleDynoHandoff(); h.bike = { rosterKey: 'b9', name: 'No Such Bike' };
+    return GBS.resolvePocketHandoffBike(s, h).status === 'unknown'; })());
+var _dm = GBS.modFromDynoHandoff(s, _dh, fat.id);
+check('dyno mod is an Engine idea at $0, never installed, never priced',
+  _dm.cat === 'Engine' && _dm.stage === 'idea' && _dm.cost === 0 && _dm.hours === 0);
+check('dyno mod name carries the run label',
+  _dm.name.indexOf('Dyno run:') === 0 && _dm.name.indexOf('Andrews EV27') >= 0);
+check('dyno mod note says ESTIMATE, not a dyno sheet, with peaks and air',
+  _dm.note.indexOf('ESTIMATE — not a dyno sheet.') === 0 &&
+  _dm.note.indexOf('68.4 hp @ 5200 rpm') >= 0 &&
+  _dm.note.indexOf('72.1 ft-lb @ 3600 rpm') >= 0 &&
+  _dm.note.indexOf('77°F at 1152 ft') >= 0);
+check('dyno mod note carries the combination, not a catalog check',
+  _dm.note.indexOf('baseline evo-1340') >= 0 && _dm.note.indexOf('cam andrews-ev27') >= 0);
+check('dyno mod date is the run date', _dm.date === '2026-11-24');
+check('dyno mod validates as a real mod once id + bikeId are added',
+  (function () {
+    var m = Object.assign({ id: GBS.newId('mod'), bikeId: fat.id }, _dm);
+    return GBS.validateMod(m) === true;
+  })());
+check('roster pin survives a store round-trip',
+  (function () {
+    var back = GBS.validateImport(GBS.exportJSON(s, {})).store;
+    var b = back.bikes.filter(function (x) { return x.id === fat.id; })[0];
+    var e = GBS.rosterForBike(back, b);
+    return e && e.rosterKey === 'b1';
+  })());
+check('sell-handoff and pocket handoff stay distinct formats',
+  GBS.POCKET_HANDOFF_FORMAT === 'pocket-garage-handoff' &&
+  GBS.isHandoffPackage(_dh) === false &&
+  GBS.isHandoffPackage(handoffPkg) === true);
+
+/* --- Pocket Garage handoff, receiving side: wiring plan -> mod --- */
+/* (Kind "wiring-to-mod": the Evo Wiring Planner sends a SUMMARY —
+ * ignition, options, run count, wire by gauge, fuses, up to 3
+ * notes. The full wire list stays in the planner. The mod is an
+ * Idea at $0 — a plan is not installed, and the planner carries
+ * no verified price. The example plan is the shared fixture,
+ * pinned from the shipped web planner's handoff.js.) */
+var _fx = JSON.parse(require('fs').readFileSync(
+  require('path').join(__dirname, '..', '..', 'evo-wiring-planner', 'handoff-fixture.json'), 'utf8'));
+function exampleWiringHandoff(overrides) {
+  var h = {
+    format: 'pocket-garage-handoff', version: 1, kind: 'wiring-to-mod',
+    sentAt: '2026-11-25T15:05:46.324Z', from: 'evo-wiring-planner',
+    bike: { rosterKey: 'b1', name: '1995 Fat Boy' },
+    payload: { plan: JSON.parse(JSON.stringify(_fx.plan)) }
+  };
+  if (overrides) Object.keys(overrides).forEach(function (k) { h[k] = overrides[k]; });
+  return h;
+}
+var _wh = exampleWiringHandoff();
+check('wiring handoff round-trips through base64url with the fixture plan intact',
+  JSON.stringify(GBS.parsePocketHandoff(GBS.encodePocketHandoff(_wh))) === JSON.stringify(_wh));
+check('wiring handoff parses from raw pasted JSON too',
+  GBS.parsePocketHandoff(JSON.stringify(_wh)).payload.plan.wireRunCount === 30);
+check('build sheets takes both handoff kinds now',
+  GBS.POCKET_HANDOFF_KINDS.indexOf('dyno-run-to-mod') !== -1 &&
+  GBS.POCKET_HANDOFF_KINDS.indexOf('wiring-to-mod') !== -1);
+throws('timing kind rejected by build sheets', function () {
+  GBS.parsePocketHandoff(JSON.stringify(exampleWiringHandoff({ kind: 'timing-to-task' })));
+});
+throws('wiring plan with zero wire runs rejected', function () {
+  var h = exampleWiringHandoff(); h.payload.plan.wireRunCount = 0;
+  GBS.parsePocketHandoff(JSON.stringify(h));
+});
+throws('wiring plan missing an options key rejected', function () {
+  var h = exampleWiringHandoff(); delete h.payload.plan.options.horn;
+  GBS.parsePocketHandoff(JSON.stringify(h));
+});
+throws('wiring plan with a non-boolean option rejected', function () {
+  var h = exampleWiringHandoff(); h.payload.plan.options.horn = 'yes';
+  GBS.parsePocketHandoff(JSON.stringify(h));
+});
+throws('wiring plan with more than 3 notes rejected', function () {
+  var h = exampleWiringHandoff(); h.payload.plan.notes.push('one more note');
+  GBS.parsePocketHandoff(JSON.stringify(h));
+});
+throws('wiring plan with a note over 200 characters rejected', function () {
+  var h = exampleWiringHandoff(); h.payload.plan.notes = [new Array(202).join('x')];
+  GBS.parsePocketHandoff(JSON.stringify(h));
+});
+throws('wiring plan with a bad ignition slug rejected', function () {
+  var h = exampleWiringHandoff(); h.payload.plan.ignition = 'dyna-9000';
+  GBS.parsePocketHandoff(JSON.stringify(h));
+});
+throws('wiring plan with a bad frame rejected', function () {
+  var h = exampleWiringHandoff(); h.payload.plan.frame = 'trike';
+  GBS.parsePocketHandoff(JSON.stringify(h));
+});
+check('CLI-shaped plan (frame and controls null) validates too',
+  (function () {
+    var h = exampleWiringHandoff();
+    h.payload.plan.frame = null; h.payload.plan.options.controls = null;
+    return GBS.parsePocketHandoff(JSON.stringify(h)).payload.plan.frame === null;
+  })());
+check('minimal magneto plan validates, fuses may be empty only for magneto',
+  (function () {
+    var h = exampleWiringHandoff();
+    h.payload.plan = JSON.parse(JSON.stringify(_fx.minimal_magneto.plan));
+    h.payload.plan.fuses = [];
+    var ok = GBS.parsePocketHandoff(JSON.stringify(h)).payload.plan.ignition === 'magneto';
+    h.payload.plan.ignition = 'dyna-2000i';
+    var threw = false;
+    try { GBS.parsePocketHandoff(JSON.stringify(h)); } catch (e) { threw = true; }
+    return ok && threw;
+  })());
+check('wiring handoff resolves by roster key (pinned by the dyno test above)',
+  GBS.resolvePocketHandoffBike(s, _wh).via === 'roster' &&
+  GBS.resolvePocketHandoffBike(s, _wh).bikeId === fat.id);
+var _wm = GBS.modFromWiringHandoff(s, _wh, fat.id);
+check('wiring mod is an Ignition & Electrical idea at $0, never installed, never priced',
+  _wm.cat === 'Ignition & Electrical' && _wm.stage === 'idea' && _wm.cost === 0 && _wm.hours === 0 &&
+  _wm.vendor === 'Evo Wiring Planner (plan)');
+check('wiring mod name carries the ignition label',
+  _wm.name.indexOf('Wiring plan: Dynatek Dyna 2000i') === 0);
+check('wiring mod note starts PLAN — not installed, names runs and gauges',
+  _wm.note.indexOf('PLAN — not installed. Dynatek Dyna 2000i (programmable), rigid frame: 30 wire runs.') === 0 &&
+  _wm.note.indexOf('4 AWG ~6 ft') >= 0 && _wm.note.indexOf('16 AWG ~41 ft') >= 0 &&
+  _wm.note.indexOf('(incl. 20% slack)') >= 0);
+check('wiring mod note lists the fuses and points back at the planner',
+  _wm.note.indexOf('Fuses: 30A main harness, 30A charging output') >= 0 &&
+  _wm.note.indexOf('Full wire-by-wire list stays in the planner') >= 0);
+check('wiring mod note carries the planner notes, and no $ anywhere in the mod',
+  _wm.note.indexOf('Lay the components in their approximate bike positions') >= 0 &&
+  JSON.stringify(_wm).indexOf('$') === -1);
+check('wiring mod date is the sent date', _wm.date === '2026-11-25');
+check('wiring mod validates as a real mod once id + bikeId are added',
+  (function () {
+    var m = Object.assign({ id: GBS.newId('mod'), bikeId: fat.id }, _wm);
+    return GBS.validateMod(m) === true;
+  })());
+check('minimal magneto mod note carries the mag-kill note',
+  (function () {
+    var h = exampleWiringHandoff();
+    h.payload.plan = JSON.parse(JSON.stringify(_fx.minimal_magneto.plan));
+    var m = GBS.modFromWiringHandoff(s, h, fat.id);
+    return m.note.indexOf('Keep all battery voltage away from that lead.') >= 0 &&
+      m.note.indexOf('16 wire runs') >= 0 && m.note.indexOf('kick-only') >= 0;
+  })());
+
+/* --- Service-worker update button (wired Nov 25, 2026) --- */
+(function () {
+  var fs = require('fs');
+  var path = require('path');
+  function read(f) { return fs.readFileSync(path.join(__dirname, f), 'utf8'); }
+  var sw = read('sw.js');
+  var html = read('index.html');
+  var appjs = read('app.js');
+  check('sw.js cache is garage-build-sheets-v11', sw.indexOf('garage-build-sheets-v11') !== -1);
+  check('sw.js precaches sw-update.js', sw.indexOf('sw-update.js') !== -1);
+  check('sw.js has the SKIP_WAITING message handler', sw.indexOf("addEventListener('message'") !== -1 && sw.indexOf('SKIP_WAITING') !== -1);
+  check('sw.js skipWaiting runs only from the message handler, never on install', sw.split('skipWaiting()').length - 1 === 1);
+  check('index.html loads sw-update.js before app.js', html.indexOf('<script src="sw-update.js"></script>') !== -1 && html.indexOf('sw-update.js') < html.indexOf('app.js'));
+  check('app.js inits the update button in the nav', appjs.indexOf("PG_SWUpdate.init({ container: document.querySelector('.nav') })") !== -1);
+  check('vendored sw-update.js is byte-identical to canonical', read('sw-update.js') === fs.readFileSync(path.join(__dirname, '..', '..', 'sw-update.js'), 'utf8'));
+})();
+
 console.log('\n' + passed + ' passed, ' + failed + ' failed.');
 if (failed) { console.log('Failures: ' + failures.join(', ')); process.exit(1); }

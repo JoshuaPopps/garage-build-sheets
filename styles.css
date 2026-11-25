@@ -282,6 +282,7 @@ td.num, th.num { text-align: right; }
 }
 .nav button:hover { transform: none; box-shadow: none; color: var(--ink); }
 .nav button.active { color: var(--accent-bright); border-bottom: 3px solid var(--accent); }
+.nav .pg-sw-update { flex: none; border: 1px solid var(--accent); border-radius: var(--radius); color: var(--accent-bright); padding: 12px 14px; margin: 6px 0; }
 .view { display: none; }
 .view.active { display: block; }
 @media (max-width: 560px) { .top h1 { font-size: 2rem; } .nav button { font-size: .9rem; } }

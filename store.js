@@ -24,7 +24,7 @@
 /* ------------------------------------------------------------------ */
 
 var APP_VERSION = '1.0.6';
-var CACHE_NAME = 'garage-build-sheets-v7';
+var CACHE_NAME = 'garage-build-sheets-v11';
 
 var STYLES = [
   { id: 'treatment1990', name: '1990 Treatment',
@@ -1064,6 +1064,13 @@ function validateRosterEntry(e) {
       throw new Error('Roster link must be a bike key or null.');
     }
   });
+  /* Pocket Garage handoff pin (see the handoff section below): the
+   * shared roster key (b1/b2/b3) this build was confirmed as. Null
+   * until a confirmed handoff pins it — never set by a name match. */
+  if (e.rosterKey !== undefined && e.rosterKey !== null &&
+      (typeof e.rosterKey !== 'string' || !e.rosterKey.trim())) {
+    throw new Error('Roster entry rosterKey must be a key or null.');
+  }
   return true;
 }
 /* The roster entry a build points at, or null. */
@@ -1115,6 +1122,7 @@ function migrateStore(s) {
     seen[e.id] = true;
     if (typeof e.name !== 'string' || !e.name.trim()) e.name = 'Bike';
     if (typeof e.base !== 'string') e.base = '';
+    if (e.rosterKey !== undefined && typeof e.rosterKey !== 'string') e.rosterKey = null;
     if (!e.linked || typeof e.linked !== 'object' || Array.isArray(e.linked)) e.linked = {};
     LINKED_APPS.forEach(function (a) {
       if (e.linked[a.id] !== null && typeof e.linked[a.id] !== 'string') e.linked[a.id] = null;
@@ -1203,6 +1211,299 @@ function resolveLinkedCandidate(store, bike, app, parsed) {
   }
   var m = matchLinkedCandidate(bike, candidates);
   return { matched: m.matched, ambiguous: m.ambiguous, via: m.matched ? 'name' : null, rosterMiss: false };
+}
+
+/* ------------------------------------------------------------------ */
+/* Pocket Garage handoff (receiving side) — see HANDOFF-FORMAT.md.    */
+/*                                                                     */
+/* This is the RECEIVING side for kind "dyno-run-to-mod" only,        */
+/* delivered as a ?handoff=<base64url(JSON)> URL parameter (or pasted */
+/* JSON on the Data tab). It is NOT the sell-handoff above (whole     */
+/* bike + claim code) — that is a different feature with a different  */
+/* payload, and the two must not be confused.                          */
+/*                                                                     */
+/* The payload is validated, the bike is resolved by roster key       */
+/* first / name match second, and NOTHING is written until the user    */
+/* confirms on the card. The dyno run becomes ONE mod: stage idea,    */
+/* category Engine, cost 0 — a run is an estimate of a combination,   */
+/* not a part bought or fitted, and the dyno knows no price.           */
+/* ------------------------------------------------------------------ */
+var POCKET_HANDOFF_FORMAT = 'pocket-garage-handoff';
+var POCKET_HANDOFF_VERSION = 1;
+var POCKET_HANDOFF_KINDS = ['dyno-run-to-mod', 'wiring-to-mod'];
+var POCKET_HANDOFF_KIND = 'dyno-run-to-mod';
+var POCKET_HANDOFF_KIND_WIRING = 'wiring-to-mod';
+var POCKET_HANDOFF_MAX_CHARS = 8000;
+
+function pocketB64urlEncode(str) {
+  if (typeof Buffer !== 'undefined') {
+    return Buffer.from(str, 'utf8').toString('base64')
+      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  return btoa(unescape(encodeURIComponent(str)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function pocketB64urlDecode(str) {
+  var s = String(str).replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  if (typeof Buffer !== 'undefined') return Buffer.from(s, 'base64').toString('utf8');
+  return decodeURIComponent(escape(atob(s)));
+}
+function encodePocketHandoff(obj) {
+  return pocketB64urlEncode(JSON.stringify(obj));
+}
+function pocketIsNonEmptyString(v) { return typeof v === 'string' && v.trim().length > 0; }
+
+/* Validate a dyno run record — the dyno's own saved-run shape
+ * (makeRunRecord() in dyno.js), verbatim. peak_hp / peak_tq must be
+ * real positive numbers; the baseline is checked only for presence,
+ * NOT against the dyno catalog (this app has no catalog) — the
+ * confirm card says so. */
+function validatePocketDynoRun(run) {
+  if (!run || typeof run !== 'object' || Array.isArray(run)) throw new Error('That handoff has no dyno run in it.');
+  if (!pocketIsNonEmptyString(run.id)) throw new Error('That dyno run has no id.');
+  if (!pocketIsNonEmptyString(run.savedAt) || isNaN(Date.parse(run.savedAt))) throw new Error('That dyno run has no usable date.');
+  if (!pocketIsNonEmptyString(run.label)) throw new Error('That dyno run has no label.');
+  if (!run.combo || typeof run.combo !== 'object' || Array.isArray(run.combo)) throw new Error('That dyno run has no combination in it.');
+  if (!pocketIsNonEmptyString(run.combo.baseline)) throw new Error('That dyno run names no baseline.');
+  if (typeof run.peak_hp !== 'number' || !(run.peak_hp > 0)) throw new Error('That dyno run has no peak horsepower.');
+  if (typeof run.peak_tq !== 'number' || !(run.peak_tq > 0)) throw new Error('That dyno run has no peak torque.');
+  if (run.tempF !== undefined && run.tempF !== null && typeof run.tempF !== 'number') throw new Error('That dyno run has a bad temperature.');
+  if (run.altFt !== undefined && run.altFt !== null && typeof run.altFt !== 'number') throw new Error('That dyno run has a bad altitude.');
+  return {
+    id: run.id, savedAt: run.savedAt, label: run.label,
+    combo: {
+      baseline: run.combo.baseline,
+      displacement_ci: run.combo.displacement_ci == null ? null : run.combo.displacement_ci,
+      compression: run.combo.compression == null ? null : run.combo.compression,
+      carb: run.combo.carb || null, cam: run.combo.cam || null,
+      exhaust: run.combo.exhaust || null, heads: run.combo.heads || null,
+      air: run.combo.air || null, fuel: run.combo.fuel || null,
+      rev_limit: run.combo.rev_limit == null ? null : run.combo.rev_limit
+    },
+    peak_hp: run.peak_hp, peak_hp_rpm: run.peak_hp_rpm == null ? null : run.peak_hp_rpm,
+    peak_tq: run.peak_tq, peak_tq_rpm: run.peak_tq_rpm == null ? null : run.peak_tq_rpm,
+    tempF: run.tempF == null ? null : run.tempF,
+    altFt: run.altFt == null ? null : run.altFt
+  };
+}
+
+/* Validate a wiring plan summary — the Evo Wiring Planner's
+ * handoff payload (kind "wiring-to-mod"). SUMMARY only: ignition,
+ * options, wire-run count, wire by gauge (routed feet + 20%
+ * slack), fuse list, at most 3 planner notes. The full wire list
+ * stays in the planner. No price is ever carried — the planner's
+ * shopping-list prices are estimates, so the mod costs $0. */
+var POCKET_WIRING_IGNITIONS = ['stock', 'dyna-2000i', 'dyna-s', 'hi-4', 'points', 'magneto'];
+var POCKET_WIRING_FRAMES = ['rigid', 'softail', 'dyna', 'fxr', 'sportster', 'touring'];
+var POCKET_WIRING_CONTROLS = ['stock', 'custom', 'minimal'];
+function validatePocketWiringPlan(plan) {
+  if (!plan || typeof plan !== 'object' || Array.isArray(plan)) throw new Error('That handoff has no wiring plan in it.');
+  if (POCKET_WIRING_IGNITIONS.indexOf(plan.ignition) === -1) throw new Error('That wiring plan names an ignition this app does not know.');
+  if (!pocketIsNonEmptyString(plan.ignitionLabel)) throw new Error('That wiring plan has no ignition name.');
+  if (plan.frame !== null && POCKET_WIRING_FRAMES.indexOf(plan.frame) === -1) throw new Error('That wiring plan names a frame this app does not know.');
+  var o = plan.options;
+  if (!o || typeof o !== 'object' || Array.isArray(o)) throw new Error('That wiring plan has no options in it.');
+  var boolKeys = ['electricStart', 'headlight', 'highLow', 'tailBrake', 'turnSignals', 'horn'];
+  var i;
+  for (i = 0; i < boolKeys.length; i++) {
+    if (typeof o[boolKeys[i]] !== 'boolean') throw new Error('That wiring plan is missing its ' + boolKeys[i] + ' choice.');
+  }
+  if (o.controls !== null && POCKET_WIRING_CONTROLS.indexOf(o.controls) === -1) throw new Error('That wiring plan names controls this app does not know.');
+  if (typeof plan.wireRunCount !== 'number' || plan.wireRunCount % 1 !== 0 || !(plan.wireRunCount > 0)) throw new Error('That wiring plan has no wire-run count.');
+  var byGauge = plan.wireByGauge;
+  if (!byGauge || typeof byGauge !== 'object' || Array.isArray(byGauge)) throw new Error('That wiring plan has no wire-by-gauge list.');
+  var gauges = Object.keys(byGauge);
+  if (!gauges.length) throw new Error('That wiring plan has no wire-by-gauge list.');
+  for (i = 0; i < gauges.length; i++) {
+    if (typeof byGauge[gauges[i]] !== 'number' || !(byGauge[gauges[i]] > 0)) throw new Error('That wiring plan has a bad wire length for ' + gauges[i] + '.');
+  }
+  if (!Array.isArray(plan.fuses)) throw new Error('That wiring plan has no fuse list.');
+  for (i = 0; i < plan.fuses.length; i++) {
+    if (!pocketIsNonEmptyString(plan.fuses[i])) throw new Error('That wiring plan has a blank fuse entry.');
+  }
+  if (!plan.fuses.length && plan.ignition !== 'magneto') throw new Error('That wiring plan has no fuses.');
+  var notes = plan.notes == null ? [] : plan.notes;
+  if (!Array.isArray(notes)) throw new Error('That wiring plan has bad notes.');
+  if (notes.length > 3) throw new Error('That wiring plan carries more than 3 notes.');
+  for (i = 0; i < notes.length; i++) {
+    if (typeof notes[i] !== 'string' || notes[i].length > 200) throw new Error('That wiring plan has a note that is too long.');
+  }
+  var cleanGauges = {};
+  gauges.forEach(function (g) { cleanGauges[g] = byGauge[g]; });
+  return {
+    ignition: plan.ignition, ignitionLabel: plan.ignitionLabel.trim(),
+    frame: plan.frame == null ? null : plan.frame,
+    options: {
+      electricStart: o.electricStart, headlight: o.headlight, highLow: o.highLow,
+      tailBrake: o.tailBrake, turnSignals: o.turnSignals, horn: o.horn,
+      controls: o.controls == null ? null : o.controls
+    },
+    wireRunCount: plan.wireRunCount, wireByGauge: cleanGauges,
+    fuses: plan.fuses.slice(), notes: notes.slice()
+  };
+}
+
+/* Validate a decoded handoff object. Returns a normalized copy or
+ * throws with a plain-words reason. */
+function validatePocketHandoff(obj) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) throw new Error('That link is not a Pocket Garage handoff.');
+  if (obj.format !== POCKET_HANDOFF_FORMAT) throw new Error('That link is not a Pocket Garage handoff (wrong format).');
+  if (obj.version !== POCKET_HANDOFF_VERSION) throw new Error('That handoff is version ' + obj.version + ' — this app only takes version ' + POCKET_HANDOFF_VERSION + '.');
+  if (POCKET_HANDOFF_KINDS.indexOf(obj.kind) === -1) throw new Error('This app takes dyno-run and wiring-plan handoffs, not "' + obj.kind + '".');
+  if (!pocketIsNonEmptyString(obj.sentAt) || isNaN(Date.parse(obj.sentAt))) throw new Error('That handoff has no usable sent date.');
+  if (!pocketIsNonEmptyString(obj.from)) throw new Error('That handoff does not say which app sent it.');
+  if (!obj.bike || !pocketIsNonEmptyString(obj.bike.rosterKey)) throw new Error('That handoff does not say which bike it is for.');
+  if (!pocketIsNonEmptyString(obj.bike.name)) throw new Error('That handoff has no bike name.');
+  if (!obj.payload || typeof obj.payload !== 'object' || Array.isArray(obj.payload)) throw new Error('That handoff has no payload in it.');
+  if (obj.kind === POCKET_HANDOFF_KIND_WIRING) {
+    return {
+      format: obj.format, version: obj.version, kind: obj.kind,
+      sentAt: obj.sentAt, from: obj.from,
+      bike: { rosterKey: obj.bike.rosterKey.trim(), name: obj.bike.name.trim() },
+      payload: { plan: validatePocketWiringPlan(obj.payload.plan) }
+    };
+  }
+  return {
+    format: obj.format, version: obj.version, kind: obj.kind,
+    sentAt: obj.sentAt, from: obj.from,
+    bike: { rosterKey: obj.bike.rosterKey.trim(), name: obj.bike.name.trim() },
+    payload: { run: validatePocketDynoRun(obj.payload.run) }
+  };
+}
+
+/* Parse handoff text: raw JSON (pasted) or base64url JSON (from the
+ * ?handoff= parameter). Throws with a plain-words reason. */
+function parsePocketHandoff(text) {
+  if (text == null) throw new Error('Nothing to read — no handoff there.');
+  var raw = String(text).trim();
+  if (!raw) throw new Error('Nothing to read — no handoff there.');
+  if (raw.length > POCKET_HANDOFF_MAX_CHARS * 2) throw new Error('That handoff is too big — handoffs are one record at a time.');
+  var json;
+  try {
+    json = raw.charAt(0) === '{' ? raw : pocketB64urlDecode(raw);
+  } catch (e) {
+    throw new Error('That link is not a readable handoff — the code in it is garbled.');
+  }
+  if (json.length > POCKET_HANDOFF_MAX_CHARS) throw new Error('That handoff is too big — handoffs are one record at a time.');
+  var obj;
+  try { obj = JSON.parse(json); } catch (e) { throw new Error('That link is not a Pocket Garage handoff (not JSON).'); }
+  return validatePocketHandoff(obj);
+}
+
+/* Resolve which local bike a handoff belongs to. Roster key first
+ * (a build already pinned to that key, on its roster entry); name
+ * match second, only when exactly one bike matches; otherwise
+ * unknown — the UI asks the user to pick. Never guesses, never
+ * creates a bike. */
+function resolvePocketHandoffBike(store, handoff) {
+  var key = handoff.bike.rosterKey;
+  var i, b, entry;
+  for (i = 0; i < (store.bikes || []).length; i++) {
+    b = store.bikes[i];
+    entry = rosterForBike(store, b);
+    if (entry && entry.rosterKey === key) return { status: 'matched', via: 'roster', bike: b, bikeId: b.id };
+  }
+  var hits = (store.bikes || []).filter(function (bike) {
+    return namesMatch(bike.name, handoff.bike.name) || namesMatch(bike.base, handoff.bike.name);
+  });
+  if (hits.length === 1) return { status: 'matched', via: 'name', bike: hits[0], bikeId: hits[0].id };
+  return { status: 'unknown', via: null, bike: null, candidates: hits.length };
+}
+
+/* Pin a roster key to a build — only called after the user confirms
+ * a handoff onto that build. Refuses if the key already belongs to
+ * a different build. */
+function pinPocketRosterKey(store, rosterKey, bikeId) {
+  var bike = null;
+  (store.bikes || []).forEach(function (b) { if (b.id === bikeId) bike = b; });
+  if (!bike) throw new Error('Bike not found.');
+  var clash = (store.roster || []).some(function (e) {
+    return e.rosterKey === rosterKey && e.id !== (bike.rosterId || null);
+  });
+  if (clash) throw new Error('That roster key already belongs to another bike in this garage.');
+  var entry = ensureRosterForBike(store, bike);
+  entry.rosterKey = rosterKey;
+  return entry;
+}
+
+/* The mod a confirmed dyno-run handoff creates — fields only, NOT
+ * inserted (the shell adds the id/bikeId, validates, and saves).
+ * Stage idea, category Engine, cost 0: an estimate is an idea until
+ * the parts are bought and fitted, and the dyno knows no price. The
+ * note carries the whole run so the sheet shows what was estimated,
+ * in what air, and says plainly it is not a dyno sheet. */
+function modFromDynoHandoff(store, handoff, bikeId) {
+  var bike = null;
+  (store.bikes || []).forEach(function (b) { if (b.id === bikeId) bike = b; });
+  if (!bike) throw new Error('Pick a bike first.');
+  var run = handoff.payload.run;
+  var name = 'Dyno run: ' + run.label;
+  if (name.length > 100) name = name.slice(0, 97) + '…';
+  var parts = [];
+  if (run.combo.baseline) parts.push('baseline ' + run.combo.baseline);
+  if (run.combo.carb) parts.push('carb ' + run.combo.carb);
+  if (run.combo.cam) parts.push('cam ' + run.combo.cam);
+  if (run.combo.exhaust) parts.push('exhaust ' + run.combo.exhaust);
+  if (run.combo.displacement_ci) parts.push(run.combo.displacement_ci + ' ci');
+  if (run.combo.compression) parts.push(run.combo.compression + ':1');
+  if (run.combo.rev_limit) parts.push('rev limit ' + run.combo.rev_limit + ' rpm');
+  var note = 'ESTIMATE — not a dyno sheet. ' + run.label + ': ' + run.peak_hp + ' hp' +
+    (run.peak_hp_rpm != null ? ' @ ' + run.peak_hp_rpm + ' rpm' : '') + ', ' + run.peak_tq + ' ft-lb' +
+    (run.peak_tq_rpm != null ? ' @ ' + run.peak_tq_rpm + ' rpm' : '') + '.' +
+    (run.tempF != null || run.altFt != null
+      ? ' Run in' + (run.tempF != null ? ' ' + run.tempF + '°F' : '') +
+        (run.altFt != null ? ' at ' + run.altFt + ' ft' : '') + '.' : '') +
+    (parts.length ? ' Combo: ' + parts.join(', ') + '.' : '');
+  var date = '';
+  try { date = new Date(run.savedAt).toISOString().slice(0, 10); } catch (e) { date = todayISO(); }
+  return {
+    name: name, cat: 'Engine', stage: 'idea', date: date,
+    vendor: 'Pocket Garage Dyno (estimate)', vendorUrl: '',
+    cost: 0, hours: 0, note: note, tag: tagSpotFor(name), receiptPhotoId: null
+  };
+}
+
+/* The mod a confirmed wiring-plan handoff creates — fields only,
+ * NOT inserted (the shell adds the id/bikeId, validates, and
+ * saves). Stage idea, category Ignition & Electrical, cost 0: a
+ * plan is an idea until the wire is bought and run, and the
+ * planner carries no verified price. The note says plainly the
+ * plan is not installed, names the run count and gauges, lists
+ * the fuses, and points back at the planner for the full wire
+ * list — that list is never copied into the sheet. */
+function modFromWiringHandoff(store, handoff, bikeId) {
+  var bike = null;
+  (store.bikes || []).forEach(function (b) { if (b.id === bikeId) bike = b; });
+  if (!bike) throw new Error('Pick a bike first.');
+  var plan = handoff.payload.plan;
+  var o = plan.options;
+  var name = 'Wiring plan: ' + plan.ignitionLabel;
+  if (name.length > 100) name = name.slice(0, 97) + '…';
+  var choices = [];
+  choices.push(o.electricStart ? 'electric start' : 'kick-only');
+  if (o.headlight) choices.push(o.highLow ? 'headlight high/low' : 'headlight single-beam');
+  if (o.tailBrake) choices.push('tail/brake');
+  choices.push(o.turnSignals ? 'turn signals' : 'no turn signals');
+  choices.push(o.horn ? 'horn' : 'no horn');
+  if (o.controls) choices.push(o.controls + ' controls');
+  var wireBits = Object.keys(plan.wireByGauge).map(function (g) {
+    return g + ' ~' + plan.wireByGauge[g] + ' ft';
+  });
+  var note = 'PLAN — not installed. ' + plan.ignitionLabel +
+    (plan.frame ? ', ' + plan.frame + ' frame' : '') + ': ' +
+    plan.wireRunCount + ' wire runs. ' + choices.join(', ') + '. ' +
+    'Wire: ' + wireBits.join(', ') + ' (incl. 20% slack).' +
+    (plan.fuses.length ? ' Fuses: ' + plan.fuses.join(', ') + '.' : '') +
+    ' Full wire-by-wire list stays in the planner — print it from there.';
+  if (plan.notes.length) note += '\n' + plan.notes.join('\n');
+  var date = '';
+  try { date = new Date(handoff.sentAt).toISOString().slice(0, 10); } catch (e) { date = todayISO(); }
+  return {
+    name: name, cat: 'Ignition & Electrical', stage: 'idea', date: date,
+    vendor: 'Evo Wiring Planner (plan)', vendorUrl: '',
+    cost: 0, hours: 0, note: note, tag: tagSpotFor(name), receiptPhotoId: null
+  };
 }
 
 /* Normalize a bike name for matching: lowercase, letters and
@@ -2180,6 +2481,18 @@ var GBS_API = {
   validateLinkSummary: validateLinkSummary,
   attachLinkedSummary: attachLinkedSummary, removeLinkedSummary: removeLinkedSummary,
   linkedBlockHtml: linkedBlockHtml, linkedTextLines: linkedTextLines,
+  POCKET_HANDOFF_FORMAT: POCKET_HANDOFF_FORMAT,
+  POCKET_HANDOFF_VERSION: POCKET_HANDOFF_VERSION,
+  POCKET_HANDOFF_KINDS: POCKET_HANDOFF_KINDS,
+  POCKET_HANDOFF_KIND: POCKET_HANDOFF_KIND,
+  POCKET_HANDOFF_KIND_WIRING: POCKET_HANDOFF_KIND_WIRING,
+  POCKET_HANDOFF_MAX_CHARS: POCKET_HANDOFF_MAX_CHARS,
+  encodePocketHandoff: encodePocketHandoff, parsePocketHandoff: parsePocketHandoff,
+  validatePocketHandoff: validatePocketHandoff, validatePocketDynoRun: validatePocketDynoRun,
+  validatePocketWiringPlan: validatePocketWiringPlan,
+  resolvePocketHandoffBike: resolvePocketHandoffBike,
+  pinPocketRosterKey: pinPocketRosterKey, modFromDynoHandoff: modFromDynoHandoff,
+  modFromWiringHandoff: modFromWiringHandoff,
   sampleStore: sampleStore, bikePhoto: bikePhoto
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = GBS_API;

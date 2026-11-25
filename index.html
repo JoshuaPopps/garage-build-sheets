@@ -32,6 +32,7 @@
 
   <section id="view-garage" class="view active" aria-label="Your garage">
     <h2>Your garage</h2>
+    <div id="handoff-box"></div>
     <div id="garageGrid" class="garage-grid"></div>
     <div id="garageEmpty" class="empty" hidden>
       <strong>No bikes in the garage yet.</strong>
@@ -71,6 +72,12 @@
       </div>
     </div>
     <div class="card">
+      <h3>Receive a handoff</h3>
+      <p>A dyno run sent from Pocket Garage Dyno arrives as a link — tap it and this garage opens with a confirm card. If a messaging app mangled the link, paste the handoff JSON here instead: same check, same confirm, nothing is applied until you say so.</p>
+      <label>Paste handoff JSON<textarea id="handoff-paste-text" rows="4" placeholder='{"format":"pocket-garage-handoff","version":1,…}'></textarea></label>
+      <button id="handoff-paste-btn" type="button">Read handoff</button>
+    </div>
+    <div class="card">
       <h3>Claim a bike</h3>
       <p>Buying a bike from another Garage Build Sheets user? They send you a <strong>handoff file</strong> and a <strong>claim code</strong> &mdash; pick the file here, enter the code, and the bike merges into your garage with its parts, photos, notes, and issues. A wrong code adds nothing.</p>
       <button id="claimBtn" type="button">Claim a bike (.json)</button>
@@ -105,6 +112,7 @@
 <div id="toast" class="toast" hidden><span id="toastMsg"></span><button id="toastUndo" type="button" class="small">Undo</button><button id="toastClose" type="button" class="small secondary">Dismiss</button></div>
 
 <script src="store.js"></script>
+<script src="sw-update.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

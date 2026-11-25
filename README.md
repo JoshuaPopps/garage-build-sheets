@@ -175,6 +175,6 @@ empty state instead of a blank screen.
 - `app.js` — browser shell: IndexedDB, photo downscale, rendering,
   forms, share-card drawing, downloads.
 - `styles.css` — 1990 Treatment base plus all six sheet styles.
-- `sw.js` — cache-first service worker (`garage-build-sheets-v7`).
+- `sw.js` — cache-first service worker (`garage-build-sheets-v11`).
 - `manifest.webmanifest`, `icons/` — PWA install files.
 - `test.js`, `test_ui.py` — see TESTING.md.

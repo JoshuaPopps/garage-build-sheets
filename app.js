@@ -172,6 +172,11 @@ var ui = {
 };
 var toastTimer = null;
 var pendingBlobDeletes = [];
+/* A validated Pocket Garage handoff (dyno run -> mod) waiting on the
+ * user's confirm. In memory only — never persisted, never applied
+ * without a tap. Distinct from ui.handoff, which is the whole-bike
+ * sell-handoff panel. */
+var pendingPocketHandoff = null;
 
 /* Dragging a photo-tag pin. Pins are re-rendered by render(), so
  * the drag rides on document-level pointer events, not on the pin
@@ -279,6 +284,148 @@ function stageHint(stage) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Pocket Garage handoff (receiving side) — dyno run -> mod.          */
+/* Nothing is written until the user taps confirm. Distinct from the  */
+/* whole-bike sell-handoff (ui.handoff) above.                         */
+/* ------------------------------------------------------------------ */
+function pocketHandoffSentDate(handoff) {
+  try { return new Date(handoff.sentAt).toLocaleDateString(); }
+  catch (e) { return handoff.sentAt; }
+}
+
+function renderPocketHandoffBox() {
+  var box = document.getElementById('handoff-box');
+  if (!box || !store) return;
+  if (!pendingPocketHandoff) { box.innerHTML = ''; return; }
+  if (pendingPocketHandoff.error) {
+    box.innerHTML = '<div class="card import-choice"><h3>Handoff could not be read</h3>' +
+      '<p>' + esc(pendingPocketHandoff.error) + '</p>' +
+      '<p class="muted">Nothing was changed. Ask the sending app for a fresh link.</p>' +
+      '<button type="button" class="secondary" data-action="xapp-handoff-dismiss">Dismiss</button></div>';
+    return;
+  }
+  var handoff = pendingPocketHandoff.handoff;
+  var res = pendingPocketHandoff.resolution;
+  var html;
+  if (handoff.kind === 'wiring-to-mod') {
+    var plan = handoff.payload.plan;
+    var o = plan.options;
+    var choices = [];
+    choices.push(o.electricStart ? 'electric start' : 'kick-only');
+    if (o.headlight) choices.push(o.highLow ? 'headlight high/low' : 'headlight single-beam');
+    if (o.tailBrake) choices.push('tail/brake');
+    choices.push(o.turnSignals ? 'turn signals' : 'no turn signals');
+    choices.push(o.horn ? 'horn' : 'no horn');
+    if (o.controls) choices.push(o.controls + ' controls');
+    var wireBits = Object.keys(plan.wireByGauge).map(function (g) {
+      return esc(g) + ' ~' + esc(plan.wireByGauge[g]) + ' ft';
+    });
+    html = '<div class="card import-choice"><h3>Wiring plan arrived — from Evo Wiring Planner</h3>' +
+      '<p><b>Wiring plan: ' + esc(plan.ignitionLabel) + '</b></p>' +
+      '<p>' + esc(plan.wireRunCount) + ' wire runs' +
+      (plan.frame ? ' · ' + esc(plan.frame) + ' frame' : '') +
+      ' · sent ' + esc(pocketHandoffSentDate(handoff)) + '</p>' +
+      '<p class="muted">' + esc(choices.join(', ')) + '</p>' +
+      '<p class="muted">Wire: ' + wireBits.join(', ') + ' (incl. 20% slack).' +
+      (plan.fuses.length ? ' Fuses: ' + esc(plan.fuses.join(', ')) + '.' : '') + '</p>' +
+      (plan.notes.length ? '<p class="muted">Planner notes:<br>' + plan.notes.map(function (n) { return esc(n); }).join('<br>') + '</p>' : '') +
+      '<p class="muted">This becomes one mod — stage <b>Idea</b>, category <b>Ignition &amp; Electrical</b>, cost <b>$0</b> — because a plan is not installed yet, and the planner carries no verified price. The full wire-by-wire list stays in the planner — print it from there.</p>';
+  } else {
+  var run = handoff.payload.run;
+  html = '<div class="card import-choice"><h3>Dyno run arrived — from Pocket Garage Dyno</h3>' +
+    '<p><b>' + esc(run.label) + '</b></p>' +
+    '<p>' + esc(run.peak_hp) + ' hp' + (run.peak_hp_rpm != null ? ' @ ' + esc(run.peak_hp_rpm) + ' rpm' : '') +
+    ' · ' + esc(run.peak_tq) + ' ft-lb' + (run.peak_tq_rpm != null ? ' @ ' + esc(run.peak_tq_rpm) + ' rpm' : '') +
+    ' · run ' + esc(new Date(run.savedAt).toLocaleDateString()) +
+    (run.tempF != null || run.altFt != null
+      ? ' · ' + (run.tempF != null ? esc(run.tempF) + '°F' : '') + (run.altFt != null ? ' at ' + esc(run.altFt) + ' ft' : '') : '') +
+    ' · sent ' + esc(pocketHandoffSentDate(handoff)) + '</p>' +
+    '<p class="muted">Combination: baseline ' + esc(run.combo.baseline) +
+    (run.combo.carb ? ' · carb ' + esc(run.combo.carb) : '') +
+    (run.combo.cam ? ' · cam ' + esc(run.combo.cam) : '') +
+    (run.combo.exhaust ? ' · exhaust ' + esc(run.combo.exhaust) : '') +
+    (run.combo.displacement_ci ? ' · ' + esc(run.combo.displacement_ci) + ' ci' : '') + '</p>' +
+    '<p class="muted">This becomes one mod — stage <b>Idea</b>, category <b>Engine</b>, cost <b>$0</b> — because a dyno run is an estimate, not a part bought or fitted. The baseline is taken as given: this app does not check it against the dyno catalog.</p>';
+  }
+  if (res.status === 'matched') {
+    html += '<p><b>For:</b> ' + esc(res.bike.name) + ' <span class="muted">(matched by ' +
+      (res.via === 'roster' ? 'roster key ' + esc(handoff.bike.rosterKey) : 'name') + ')</span></p>';
+  } else {
+    if (!store.bikes.length) {
+      html += '<p class="muted">No bikes in this garage yet — add the bike first, then open the link again.</p>';
+      box.innerHTML = html + '<button type="button" class="secondary" data-action="xapp-handoff-dismiss">Dismiss</button></div>';
+      return;
+    }
+    html += '<p>This ' + (handoff.kind === 'wiring-to-mod' ? 'plan' : 'run') + ' is for "' + esc(handoff.bike.name) + '" — no bike here matches it yet. Which bike is it for?</p>' +
+      '<label>Bike<select id="xapp-handoff-bike">' +
+      store.bikes.map(function (b) {
+        return '<option value="' + esc(b.id) + '">' + esc(b.name) + '</option>';
+      }).join('') + '</select></label>' +
+      '<p class="muted">Picking a bike pins it to roster key ' + esc(handoff.bike.rosterKey) + ', so the next handoff for this bike lands without asking.</p>';
+  }
+  html += '<button type="button" data-action="xapp-handoff-confirm">Add as an Idea mod</button> ' +
+    '<button type="button" class="secondary" data-action="xapp-handoff-dismiss">Dismiss — do nothing</button></div>';
+  box.innerHTML = html;
+}
+
+function receivePocketHandoff(text) {
+  if (!store) { showToast('Garage still loading — try again in a moment.'); return; }
+  try {
+    var handoff = GBS.parsePocketHandoff(text);
+    pendingPocketHandoff = { handoff: handoff, resolution: GBS.resolvePocketHandoffBike(store, handoff), error: null };
+    renderPocketHandoffBox();
+  } catch (err) {
+    pendingPocketHandoff = { handoff: null, resolution: null, error: err.message };
+    renderPocketHandoffBox();
+  }
+}
+
+function checkPocketHandoffFromUrl() {
+  if (!store) return;
+  var raw = null;
+  try { raw = new URLSearchParams(window.location.search).get('handoff'); } catch (e) { return; }
+  if (!raw) return;
+  try { history.replaceState(null, '', window.location.pathname); } catch (e) { /* harmless */ }
+  receivePocketHandoff(raw);
+}
+
+function confirmPocketHandoff() {
+  if (!pendingPocketHandoff || !pendingPocketHandoff.handoff) return;
+  var handoff = pendingPocketHandoff.handoff;
+  var bikeId = null;
+  if (pendingPocketHandoff.resolution && pendingPocketHandoff.resolution.status === 'matched') {
+    bikeId = pendingPocketHandoff.resolution.bikeId;
+  } else {
+    var sel = document.getElementById('xapp-handoff-bike');
+    bikeId = sel ? sel.value : null;
+  }
+  var bike = bikeId ? findBike(bikeId) : null;
+  if (!bike) { showToast(handoff.kind === 'wiring-to-mod' ? 'Pick which bike this wiring plan is for.' : 'Pick which bike this dyno run is for.'); return; }
+  var fields;
+  try {
+    fields = handoff.kind === 'wiring-to-mod'
+      ? GBS.modFromWiringHandoff(store, handoff, bikeId)
+      : GBS.modFromDynoHandoff(store, handoff, bikeId);
+    GBS.pinPocketRosterKey(store, handoff.bike.rosterKey, bikeId);
+  } catch (err) { showToast('Could not add that mod: ' + err.message); return; }
+  var mod = Object.assign({
+    id: GBS.newId('mod'), bikeId: bikeId,
+    tag: GBS.tagSpotFor(fields.name), receiptPhotoId: null
+  }, fields);
+  try { GBS.validateMod(mod); } catch (err) { showToast('Could not add that mod: ' + err.message); return; }
+  store.mods.unshift(mod);
+  store.selectedBikeId = bikeId;
+  pendingPocketHandoff = null;
+  persist().then(render).then(function () {
+    renderPocketHandoffBox();
+    showView('detail');
+    showToast(handoff.kind === 'wiring-to-mod'
+      ? 'Wiring plan added as an Idea mod on ' + bike.name + ' — plan only, cost $0.'
+      : 'Dyno run added as an Idea mod on ' + bike.name + ' — estimate only, cost $0.');
+  });
+}
+
+/* ------------------------------------------------------------------ */
 /* Init                                                                */
 /* ------------------------------------------------------------------ */
 function init() {
@@ -300,16 +447,18 @@ function init() {
       store._firstRun = true;
     }
     if (!store.selectedBikeId && store.bikes.length) store.selectedBikeId = store.bikes[0].id;
-    return persist().then(render);
+    return persist().then(render).then(function () { checkPocketHandoffFromUrl(); });
   }).catch(function (err) {
     store = GBS.sampleStore();
     store._firstRun = true;
     render();
+    checkPocketHandoffFromUrl();
     showToast('Could not open the on-device database — showing the examples. ' + (err && err.message ? err.message : ''));
   });
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(function () { /* offline still works without it */ });
   }
+  var swUpdate = PG_SWUpdate.init({ container: document.querySelector('.nav') });
 }
 function bindStatic() {
   document.querySelectorAll('[data-nav]').forEach(function (btn) {
@@ -348,6 +497,17 @@ function bindStatic() {
   document.getElementById('restoreExamplesBtn').addEventListener('click', restoreExamples);
   document.getElementById('deleteExamplesBtn').addEventListener('click', function () { deleteExamples(false); });
   document.getElementById('resetBtn').addEventListener('click', resetAll);
+  /* Paste fallback for a handoff link a messaging app mangled: the
+   * same JSON, the same validator, the same confirm card. */
+  var pasteBtn = document.getElementById('handoff-paste-btn');
+  if (pasteBtn) pasteBtn.addEventListener('click', function () {
+    var text = document.getElementById('handoff-paste-text').value;
+    if (!text.trim()) { showToast('Paste the handoff JSON first.'); return; }
+    receivePocketHandoff(text);
+    showView('garage');
+    var box = document.getElementById('handoff-box');
+    if (box) box.scrollIntoView();
+  });
   document.getElementById('toastClose').addEventListener('click', hideToast);
   document.addEventListener('click', onClick);
   document.addEventListener('pointerdown', onPinPointerDown);
@@ -378,6 +538,7 @@ function render() {
   var welcome = document.getElementById('welcome');
   welcome.hidden = !store._firstRun;
   renderGarage();
+  renderPocketHandoffBox();
   var bike = selectedBike();
   var detail = document.getElementById('detailWrap');
   if (!bike) {
@@ -1058,6 +1219,8 @@ function onClick(ev) {
       break;
     }
     case 'claim-cancel': ui.claimPending = null; renderClaimBox(); break;
+    case 'xapp-handoff-confirm': confirmPocketHandoff(); break;
+    case 'xapp-handoff-dismiss': pendingPocketHandoff = null; renderPocketHandoffBox(); break;
     case 'add-mod': ui.showModForm = true; ui.editingModId = null; ui.tab = 'mods'; render(); break;
     case 'edit-mod': ui.showModForm = true; ui.editingModId = id; ui.tab = 'mods'; render(); break;
     case 'cancel-mod-form': ui.showModForm = false; ui.editingModId = null; render(); break;
