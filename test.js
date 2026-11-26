@@ -1130,6 +1130,200 @@ check('minimal magneto mod note carries the mag-kill note',
       m.note.indexOf('16 wire runs') >= 0 && m.note.indexOf('kick-only') >= 0;
   })());
 
+/* --- Wiring plan stored on the mod + duplicate warning (wave 2) --- */
+/* The plan JSON that arrives IS the summary (the handoff never
+ * carries the wire-by-wire list) — "the full plan" here is that
+ * whole validated plan object, stored on the mod so the sheet
+ * can show the wire list without linking out to the planner
+ * (a link would 404: the planner is a private artifact). */
+check('wiring mod stores the full validated plan on the record',
+  JSON.stringify(_wm.wiringPlan) === JSON.stringify(GBS.parsePocketHandoff(GBS.encodePocketHandoff(_wh)).payload.plan));
+check('wiring mod with a stored plan still validates as a real mod',
+  (function () {
+    var m = Object.assign({ id: GBS.newId('mod'), bikeId: fat.id }, _wm);
+    return GBS.validateMod(m) === true;
+  })());
+check('a mod with a mangled stored plan fails validation instead of rendering garbage',
+  (function () {
+    var m = Object.assign({ id: GBS.newId('mod'), bikeId: fat.id }, _wm);
+    m.wiringPlan = { ignition: 'dyna-9000' };
+    try { GBS.validateMod(m); return false; } catch (e) { return true; }
+  })());
+var sW = GBS.sampleStore();
+var fatW = sW.bikes[0];
+check('no duplicate wiring plan on a store with no wiring mods',
+  GBS.findWiringPlanDuplicate(sW, fatW.id, _wh.payload.plan) === null);
+var wmFull = Object.assign({ id: GBS.newId('mod'), bikeId: fatW.id }, GBS.modFromWiringHandoff(sW, _wh, fatW.id));
+sW.mods.unshift(wmFull);
+check('duplicate wiring plan found once the mod is on the sheet',
+  (function () {
+    var d = GBS.findWiringPlanDuplicate(sW, fatW.id, _wh.payload.plan);
+    return d && d.id === wmFull.id;
+  })());
+check('a different plan is not a duplicate (different run count)',
+  (function () {
+    var h = exampleWiringHandoff(); h.payload.plan.wireRunCount = 29;
+    return GBS.findWiringPlanDuplicate(sW, fatW.id, h.payload.plan) === null;
+  })());
+check('a different plan is not a duplicate (different ignition)',
+  (function () {
+    var h = exampleWiringHandoff();
+    h.payload.plan.ignition = 'magneto'; h.payload.plan.ignitionLabel = 'Magneto';
+    return GBS.findWiringPlanDuplicate(sW, fatW.id, h.payload.plan) === null;
+  })());
+check('same plan on a different bike is not a duplicate',
+  GBS.findWiringPlanDuplicate(sW, sW.bikes[1].id, _wh.payload.plan) === null);
+check('a hand-typed mod with the same name is not a duplicate',
+  (function () {
+    var hand = {
+      id: GBS.newId('mod'), bikeId: sW.bikes[1].id, name: wmFull.name,
+      cat: 'Ignition & Electrical', stage: 'idea', date: '2026-11-25',
+      vendor: '', vendorUrl: '', cost: 0, hours: 0,
+      note: wmFull.note, tag: null, receiptPhotoId: null
+    };
+    sW.mods.unshift(hand);
+    return GBS.findWiringPlanDuplicate(sW, sW.bikes[1].id, _wh.payload.plan) === null;
+  })());
+check('a pre-v12 wiring mod (plan only in name + note) still counts as a duplicate',
+  (function () {
+    var old = JSON.parse(JSON.stringify(wmFull));
+    old.id = GBS.newId('mod'); old.bikeId = sW.bikes[2].id; delete old.wiringPlan;
+    sW.mods.unshift(old);
+    var d = GBS.findWiringPlanDuplicate(sW, sW.bikes[2].id, _wh.payload.plan);
+    return d && d.id === old.id;
+  })());
+check('export/import round-trip keeps the stored wiring plan',
+  (function () {
+    var back = GBS.validateImport(GBS.exportJSON(sW, {})).store;
+    var found = back.mods.filter(function (m) { return m.id === wmFull.id; })[0];
+    return found && JSON.stringify(found.wiringPlan) === JSON.stringify(wmFull.wiringPlan);
+  })());
+check('merge import keeps the stored wiring plan',
+  (function () {
+    var merged = GBS.mergeImport(GBS.sampleStore(), sW).store;
+    var found = merged.mods.filter(function (m) { return m.wiringPlan && m.name === wmFull.name; });
+    return found.length === 1 && JSON.stringify(found[0].wiringPlan) === JSON.stringify(wmFull.wiringPlan);
+  })());
+check('confirming anyway still adds the mod (warning never blocks)',
+  (function () {
+    var count = function () {
+      return GBS.modsFor(sW, fatW.id).filter(function (m) { return m.vendor === 'Evo Wiring Planner (plan)'; }).length;
+    };
+    var before = count();
+    var again = Object.assign({ id: GBS.newId('mod'), bikeId: fatW.id }, GBS.modFromWiringHandoff(sW, _wh, fatW.id));
+    GBS.validateMod(again);
+    sW.mods.unshift(again);
+    return before === 1 && count() === 2;
+  })());
+
+/* --- Confirm-card duplicate warning + mod detail wire list,
+ * rendered for real: app.js runs in a vm with a stubbed DOM.
+ * (The stub IndexedDB never answers, so init's load never
+ * settles — the render functions are still callable, and the
+ * store is seeded by hand, exactly as the card sees it.) --- */
+(function () {
+  var vm = require('vm');
+  var fs = require('fs');
+  var path = require('path');
+  function fakeEl() {
+    return {
+      innerHTML: '', textContent: '', value: '', hidden: false,
+      style: {}, dataset: {},
+      classList: { contains: function () { return false; }, add: function () {}, remove: function () {} },
+      addEventListener: function () {}, removeEventListener: function () {},
+      click: function () {}, focus: function () {}, scrollIntoView: function () {},
+      appendChild: function () {}, remove: function () {},
+      querySelector: function () { return null; }, querySelectorAll: function () { return []; },
+      getAttribute: function () { return null; }, setAttribute: function () {}
+    };
+  }
+  var els = {};
+  function getEl(id) { if (!els[id]) els[id] = fakeEl(); return els[id]; }
+  var sandbox = {
+    console: console, setTimeout: setTimeout, clearTimeout: clearTimeout,
+    GBS: GBS, navigator: {},
+    indexedDB: { open: function () { return {}; } },
+    PG_SWUpdate: { init: function () { return {}; } },
+    URL: URL,
+    document: {
+      getElementById: getEl,
+      querySelector: function () { return fakeEl(); },
+      querySelectorAll: function () { return []; },
+      addEventListener: function () {},
+      createElement: function () { return fakeEl(); },
+      body: fakeEl()
+    }
+  };
+  sandbox.window = sandbox;
+  sandbox.confirm = function () { return true; };
+  vm.createContext(sandbox);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8'), sandbox, { filename: 'app.js' });
+
+  var sApp = GBS.sampleStore();
+  var fatApp = sApp.bikes[0];
+  GBS.pinPocketRosterKey(sApp, 'b1', fatApp.id);
+  var parsed = GBS.parsePocketHandoff(JSON.stringify(exampleWiringHandoff()));
+  sandbox.store = sApp;
+  sandbox.pendingPocketHandoff = { handoff: parsed, resolution: GBS.resolvePocketHandoffBike(sApp, parsed), error: null, pickedBikeId: null };
+  sandbox.renderPocketHandoffBox();
+  var boxHtml = els['handoff-box'].innerHTML;
+  check('confirm card shows no duplicate warning when no such mod exists',
+    boxHtml.indexOf('already exists') === -1 && boxHtml.indexOf('Add as an Idea mod') !== -1);
+  var appMod = Object.assign({ id: GBS.newId('mod'), bikeId: fatApp.id }, GBS.modFromWiringHandoff(sApp, parsed, fatApp.id));
+  sApp.mods.unshift(appMod);
+  sandbox.renderPocketHandoffBox();
+  boxHtml = els['handoff-box'].innerHTML;
+  check('confirm card warns when the same plan already exists, naming the mod and the bike',
+    boxHtml.indexOf('A mod with this same plan already exists') !== -1 &&
+    boxHtml.indexOf('on ' + fatApp.name) !== -1 &&
+    boxHtml.indexOf('&ldquo;Wiring plan: Dynatek Dyna 2000i (programmable)&rdquo;') !== -1 &&
+    boxHtml.indexOf('Add as an Idea mod') !== -1);
+  var beforeCount = sApp.mods.length;
+  sandbox.confirmPocketHandoff();
+  check('confirming anyway still adds the mod through the real confirm path',
+    sApp.mods.length === beforeCount + 1 &&
+    sApp.mods.filter(function (m) { return m.vendor === 'Evo Wiring Planner (plan)'; }).length === 2);
+
+  /* Unknown bike: the picker defaults to the first bike, and the
+   * warning follows the bike actually picked. */
+  var sApp2 = GBS.sampleStore();
+  var first2 = sApp2.bikes[0], second2 = sApp2.bikes[1];
+  var mod2 = Object.assign({ id: GBS.newId('mod'), bikeId: first2.id }, GBS.modFromWiringHandoff(sApp2, parsed, first2.id));
+  sApp2.mods.unshift(mod2);
+  var unknownParsed = GBS.parsePocketHandoff(JSON.stringify(
+    exampleWiringHandoff({ bike: { rosterKey: 'b9', name: 'No Such Bike' } })));
+  sandbox.store = sApp2;
+  sandbox.pendingPocketHandoff = { handoff: unknownParsed, resolution: GBS.resolvePocketHandoffBike(sApp2, unknownParsed), error: null, pickedBikeId: null };
+  sandbox.renderPocketHandoffBox();
+  boxHtml = els['handoff-box'].innerHTML;
+  check('unknown bike: warning shows for the picker default (first bike)',
+    boxHtml.indexOf('A mod with this same plan already exists') !== -1 &&
+    boxHtml.indexOf('on ' + first2.name) !== -1);
+  var picker = getEl('xapp-handoff-bike');
+  picker.id = 'xapp-handoff-bike';
+  picker.value = second2.id;
+  sandbox.onChange({ target: picker });
+  boxHtml = els['handoff-box'].innerHTML;
+  check('unknown bike: warning follows the picked bike (second bike has no duplicate)',
+    boxHtml.indexOf('A mod with this same plan already exists') === -1);
+
+  /* Mod detail: the stored plan renders its wire list; a mod
+   * without a plan renders exactly as before. */
+  var cardHtml = sandbox.modCardHTML(first2, mod2, {});
+  check('mod detail shows the stored wiring plan wire list',
+    cardHtml.indexOf('Wiring plan') !== -1 &&
+    cardHtml.indexOf('16 AWG ~41 ft') !== -1 &&
+    cardHtml.indexOf('4 AWG ~6 ft') !== -1 &&
+    cardHtml.indexOf('Fuses: 30A main harness') !== -1 &&
+    cardHtml.indexOf('30 wire runs') !== -1 &&
+    cardHtml.indexOf('Full wire-by-wire list stays in the planner') !== -1);
+  var plainMod = sApp2.mods.filter(function (m) { return !m.wiringPlan; })[0];
+  var plainBike = sApp2.bikes.filter(function (b) { return b.id === plainMod.bikeId; })[0];
+  var plainHtml = sandbox.modCardHTML(plainBike, plainMod, {});
+  check('a mod without a plan renders with no wiring-plan section',
+    plainHtml.indexOf('wiring-plan') === -1 && plainHtml.indexOf('Wiring plan') === -1);
+})();
+
 /* --- Service-worker update button (wired Nov 25, 2026) --- */
 (function () {
   var fs = require('fs');
@@ -1138,7 +1332,7 @@ check('minimal magneto mod note carries the mag-kill note',
   var sw = read('sw.js');
   var html = read('index.html');
   var appjs = read('app.js');
-  check('sw.js cache is garage-build-sheets-v11', sw.indexOf('garage-build-sheets-v11') !== -1);
+  check('sw.js cache is garage-build-sheets-v12', sw.indexOf('garage-build-sheets-v12') !== -1);
   check('sw.js precaches sw-update.js', sw.indexOf('sw-update.js') !== -1);
   check('sw.js has the SKIP_WAITING message handler', sw.indexOf("addEventListener('message'") !== -1 && sw.indexOf('SKIP_WAITING') !== -1);
   check('sw.js skipWaiting runs only from the message handler, never on install', sw.split('skipWaiting()').length - 1 === 1);

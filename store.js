@@ -24,7 +24,7 @@
 /* ------------------------------------------------------------------ */
 
 var APP_VERSION = '1.0.6';
-var CACHE_NAME = 'garage-build-sheets-v11';
+var CACHE_NAME = 'garage-build-sheets-v12';
 
 var STYLES = [
   { id: 'treatment1990', name: '1990 Treatment',
@@ -258,6 +258,10 @@ function validateMod(m) {
   if (m.vendorUrl && !/^https?:\/\//.test(m.vendorUrl)) throw new Error('Vendor link must start with http:// or https://.');
   if (m.tag && (numOr(m.tag.x, -1) < 0 || numOr(m.tag.x, 101) > 100 ||
       numOr(m.tag.y, -1) < 0 || numOr(m.tag.y, 101) > 100)) throw new Error('Photo tag must be 0–100%.');
+  if (m.wiringPlan !== undefined && m.wiringPlan !== null) {
+    try { validatePocketWiringPlan(m.wiringPlan); }
+    catch (e) { throw new Error('Mod wiring plan is not valid: ' + e.message); }
+  }
   return true;
 }
 function validatePhoto(p) {
@@ -1216,11 +1220,12 @@ function resolveLinkedCandidate(store, bike, app, parsed) {
 /* ------------------------------------------------------------------ */
 /* Pocket Garage handoff (receiving side) — see HANDOFF-FORMAT.md.    */
 /*                                                                     */
-/* This is the RECEIVING side for kind "dyno-run-to-mod" only,        */
-/* delivered as a ?handoff=<base64url(JSON)> URL parameter (or pasted */
-/* JSON on the Data tab). It is NOT the sell-handoff above (whole     */
-/* bike + claim code) — that is a different feature with a different  */
-/* payload, and the two must not be confused.                          */
+/* This is the RECEIVING side for kinds "dyno-run-to-mod" and         */
+/* "wiring-to-mod", delivered as a ?handoff=<base64url(JSON)> URL     */
+/* parameter (or pasted JSON on the Data tab). It is NOT the          */
+/* sell-handoff above (whole bike + claim code) — that is a           */
+/* different feature with a different payload, and the two must not   */
+/* be confused.                                                        */
 /*                                                                     */
 /* The payload is validated, the bike is resolved by roster key       */
 /* first / name match second, and NOTHING is written until the user    */
@@ -1464,19 +1469,11 @@ function modFromDynoHandoff(store, handoff, bikeId) {
   };
 }
 
-/* The mod a confirmed wiring-plan handoff creates — fields only,
- * NOT inserted (the shell adds the id/bikeId, validates, and
- * saves). Stage idea, category Ignition & Electrical, cost 0: a
- * plan is an idea until the wire is bought and run, and the
- * planner carries no verified price. The note says plainly the
- * plan is not installed, names the run count and gauges, lists
- * the fuses, and points back at the planner for the full wire
- * list — that list is never copied into the sheet. */
-function modFromWiringHandoff(store, handoff, bikeId) {
-  var bike = null;
-  (store.bikes || []).forEach(function (b) { if (b.id === bikeId) bike = b; });
-  if (!bike) throw new Error('Pick a bike first.');
-  var plan = handoff.payload.plan;
+/* The name + note a wiring plan becomes on the sheet. One source
+ * of truth: the mod creator below and the duplicate check both
+ * build from this, so "the same plan summary" means the same name
+ * and the same note in both places. Takes a validated plan. */
+function wiringPlanSummary(plan) {
   var o = plan.options;
   var name = 'Wiring plan: ' + plan.ignitionLabel;
   if (name.length > 100) name = name.slice(0, 97) + '…';
@@ -1497,12 +1494,76 @@ function modFromWiringHandoff(store, handoff, bikeId) {
     (plan.fuses.length ? ' Fuses: ' + plan.fuses.join(', ') + '.' : '') +
     ' Full wire-by-wire list stays in the planner — print it from there.';
   if (plan.notes.length) note += '\n' + plan.notes.join('\n');
+  return { name: name, note: note };
+}
+
+/* A canonical key for a wiring plan, for the duplicate check: the
+ * validated plan with its gauge keys sorted, so two plans that
+ * carry the same choices in a different key order still match. */
+function wiringPlanKey(plan) {
+  var clean = validatePocketWiringPlan(plan);
+  var gauges = Object.keys(clean.wireByGauge).sort();
+  var byGauge = {};
+  gauges.forEach(function (g) { byGauge[g] = clean.wireByGauge[g]; });
+  return JSON.stringify({
+    ignition: clean.ignition, ignitionLabel: clean.ignitionLabel,
+    frame: clean.frame, options: clean.options,
+    wireRunCount: clean.wireRunCount, wireByGauge: byGauge,
+    fuses: clean.fuses, notes: clean.notes
+  });
+}
+
+/* Find a mod on this bike that already carries this same wiring
+ * plan summary — the duplicate the confirm card warns about.
+ * Returns the mod, or null. A mod made since the plan started
+ * being stored on the record compares by the stored plan; a mod
+ * from before that (v11, the plan only in its name + note)
+ * compares by the name and note, which ARE the plan summary.
+ * Only mods from the wiring planner count — a hand-typed mod
+ * with a similar name is not a duplicate. This check only
+ * informs the card: confirming anyway still adds the mod. */
+function findWiringPlanDuplicate(store, bikeId, plan) {
+  var key = wiringPlanKey(plan);
+  var summary = wiringPlanSummary(validatePocketWiringPlan(plan));
+  var mods = modsFor(store, bikeId);
+  for (var i = 0; i < mods.length; i++) {
+    var m = mods[i];
+    if (m.vendor !== 'Evo Wiring Planner (plan)') continue;
+    if (m.wiringPlan) {
+      try { if (wiringPlanKey(m.wiringPlan) === key) return m; }
+      catch (e) { /* a stored plan that no longer validates never counts as a match */ }
+    } else if (m.name === summary.name && m.note === summary.note) {
+      return m;
+    }
+  }
+  return null;
+}
+
+/* The mod a confirmed wiring-plan handoff creates — fields only,
+ * NOT inserted (the shell adds the id/bikeId, validates, and
+ * saves). Stage idea, category Ignition & Electrical, cost 0: a
+ * plan is an idea until the wire is bought and run, and the
+ * planner carries no verified price. The note says plainly the
+ * plan is not installed, names the run count and gauges, lists
+ * the fuses, and points back at the planner for the full wire
+ * list. The validated plan itself is stored on the mod as
+ * `wiringPlan` (summary only — the handoff never carries the
+ * wire-by-wire list, so there is nothing fuller to store), so
+ * the sheet can show the wire list without linking out to the
+ * planner, which is a private artifact. */
+function modFromWiringHandoff(store, handoff, bikeId) {
+  var bike = null;
+  (store.bikes || []).forEach(function (b) { if (b.id === bikeId) bike = b; });
+  if (!bike) throw new Error('Pick a bike first.');
+  var plan = validatePocketWiringPlan(handoff.payload.plan);
+  var summary = wiringPlanSummary(plan);
   var date = '';
   try { date = new Date(handoff.sentAt).toISOString().slice(0, 10); } catch (e) { date = todayISO(); }
   return {
-    name: name, cat: 'Ignition & Electrical', stage: 'idea', date: date,
+    name: summary.name, cat: 'Ignition & Electrical', stage: 'idea', date: date,
     vendor: 'Evo Wiring Planner (plan)', vendorUrl: '',
-    cost: 0, hours: 0, note: note, tag: tagSpotFor(name), receiptPhotoId: null
+    cost: 0, hours: 0, note: summary.note, tag: tagSpotFor(summary.name), receiptPhotoId: null,
+    wiringPlan: plan
   };
 }
 
@@ -2493,6 +2554,7 @@ var GBS_API = {
   resolvePocketHandoffBike: resolvePocketHandoffBike,
   pinPocketRosterKey: pinPocketRosterKey, modFromDynoHandoff: modFromDynoHandoff,
   modFromWiringHandoff: modFromWiringHandoff,
+  findWiringPlanDuplicate: findWiringPlanDuplicate,
   sampleStore: sampleStore, bikePhoto: bikePhoto
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = GBS_API;

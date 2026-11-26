@@ -306,6 +306,11 @@ function renderPocketHandoffBox() {
   }
   var handoff = pendingPocketHandoff.handoff;
   var res = pendingPocketHandoff.resolution;
+  /* The bike this card is about, for the duplicate check: the
+   * matched bike, or the bike picked in the dropdown (the first
+   * bike until the user picks another). */
+  var dupBikeId = res.status === 'matched' ? res.bikeId
+    : (pendingPocketHandoff.pickedBikeId || (store.bikes[0] && store.bikes[0].id));
   var html;
   if (handoff.kind === 'wiring-to-mod') {
     var plan = handoff.payload.plan;
@@ -359,9 +364,24 @@ function renderPocketHandoffBox() {
     html += '<p>This ' + (handoff.kind === 'wiring-to-mod' ? 'plan' : 'run') + ' is for "' + esc(handoff.bike.name) + '" — no bike here matches it yet. Which bike is it for?</p>' +
       '<label>Bike<select id="xapp-handoff-bike">' +
       store.bikes.map(function (b) {
-        return '<option value="' + esc(b.id) + '">' + esc(b.name) + '</option>';
+        return '<option value="' + esc(b.id) + '"' + (b.id === dupBikeId ? ' selected' : '') + '>' + esc(b.name) + '</option>';
       }).join('') + '</select></label>' +
       '<p class="muted">Picking a bike pins it to roster key ' + esc(handoff.bike.rosterKey) + ', so the next handoff for this bike lands without asking.</p>';
+  }
+  /* Duplicate wiring plan? Say so plainly BEFORE the user
+   * confirms — with which mod it is — but never block: the
+   * same choices re-planned on another day is a different plan,
+   * and confirming anyway still adds it. */
+  if (handoff.kind === 'wiring-to-mod' && dupBikeId) {
+    var dup = null;
+    try { dup = GBS.findWiringPlanDuplicate(store, dupBikeId, handoff.payload.plan); } catch (e) { dup = null; }
+    if (dup) {
+      var dupBike = res.status === 'matched' ? res.bike : findBike(dupBikeId);
+      html += '<p class="warn"><strong>A mod with this same plan already exists</strong>' +
+        (dupBike ? ' on ' + esc(dupBike.name) : '') + ': &ldquo;' + esc(dup.name) + '&rdquo;' +
+        (dup.date ? ' (' + esc(dup.date) + ', ' + esc(GBS.STAGE_LABELS[dup.stage] || dup.stage) + ')' : '') +
+        '. Confirming anyway adds a second copy of it.</p>';
+    }
   }
   html += '<button type="button" data-action="xapp-handoff-confirm">Add as an Idea mod</button> ' +
     '<button type="button" class="secondary" data-action="xapp-handoff-dismiss">Dismiss — do nothing</button></div>';
@@ -872,6 +892,39 @@ function modsPaneHTML(bike, ctx) {
   h += '<div id="modFormWrap">' + (ui.showModForm ? modFormHTML(bike, ui.editingModId ? findMod(ui.editingModId) : null) : '') + '</div>';
   return h;
 }
+/* A stored wiring plan on a mod — the plan summary the handoff
+ * carried (ignition, options, wire by gauge, fuses, planner
+ * notes), so the sheet shows the wire list without linking out
+ * to the planner. The planner is a private artifact, so no link
+ * to it is ever rendered — and the full wire-by-wire list still
+ * lives there; this is the summary, as the handoff sent it. A
+ * plan that no longer validates renders nothing rather than
+ * breaking the whole sheet. */
+function wiringPlanHTML(plan) {
+  var clean;
+  try { clean = GBS.validatePocketWiringPlan(plan); } catch (e) { return ''; }
+  var o = clean.options;
+  var choices = [];
+  choices.push(o.electricStart ? 'electric start' : 'kick-only');
+  if (o.headlight) choices.push(o.highLow ? 'headlight high/low' : 'headlight single-beam');
+  if (o.tailBrake) choices.push('tail/brake');
+  choices.push(o.turnSignals ? 'turn signals' : 'no turn signals');
+  choices.push(o.horn ? 'horn' : 'no horn');
+  if (o.controls) choices.push(o.controls + ' controls');
+  var wireBits = Object.keys(clean.wireByGauge).map(function (g) {
+    return esc(g) + ' ~' + esc(clean.wireByGauge[g]) + ' ft';
+  });
+  var h = '<div class="wiring-plan"><h5>Wiring plan</h5>' +
+    '<p class="muted">' + esc(clean.ignitionLabel) +
+    (clean.frame ? ' · ' + esc(clean.frame) + ' frame' : '') +
+    ' · ' + esc(clean.wireRunCount) + ' wire runs</p>' +
+    '<p class="muted">' + esc(choices.join(', ')) + '</p>' +
+    '<p>Wire: ' + wireBits.join(', ') + ' (incl. 20% slack).' +
+    (clean.fuses.length ? ' Fuses: ' + esc(clean.fuses.join(', ')) + '.' : '') + '</p>' +
+    (clean.notes.length ? '<p class="muted">Planner notes:<br>' + clean.notes.map(function (n) { return esc(n); }).join('<br>') + '</p>' : '') +
+    '<p class="muted">Full wire-by-wire list stays in the planner — print it from there.</p></div>';
+  return h;
+}
 function modCardHTML(bike, m, ctx) {
   var receipt = m.receiptPhotoId ? findPhoto(m.receiptPhotoId) : null;
   var h = '<div class="mod-card" id="mod-' + esc(m.id) + '"><h4>' + esc(m.name) +
@@ -881,6 +934,7 @@ function modCardHTML(bike, m, ctx) {
     (m.vendorUrl ? ' &middot; <a href="' + esc(m.vendorUrl) + '" target="_blank" rel="noopener">vendor link</a>' : '') +
     ' &middot; ' + GBS.fmtMoney(bike, m.cost) + (m.hours ? ' &middot; ' + m.hours + ' h' : '') + '</p>' +
     (m.note ? '<p class="mod-note">' + esc(GBS.scrubMoney(m.note, bike.hideMoney)) + '</p>' : '');
+  if (m.wiringPlan) h += wiringPlanHTML(m.wiringPlan);
   if (receipt && !bike.hideMoney) {
     h += '<img class="receipt-thumb" src="' + esc(photoURL(receipt) || '') + '" alt="Receipt photo for ' + esc(m.name) + '">';
   } else if (receipt && bike.hideMoney) {
@@ -1334,6 +1388,14 @@ function onClick(ev) {
 }
 function onChange(ev) {
   var el = ev.target;
+  if (el.id === 'xapp-handoff-bike') {
+    /* The handoff card's bike picker: remember the pick and
+     * re-render the card, so the duplicate warning follows the
+     * bike the user actually picked. */
+    if (pendingPocketHandoff) pendingPocketHandoff.pickedBikeId = el.value;
+    renderPocketHandoffBox();
+    return;
+  }
   if (el.id === 'modFilter') { ui.modFilter = el.value; render(); return; }
   if (el.id === 'modSort') { ui.modSort = el.value; render(); return; }
   if (el.id === 'modStage') {
